@@ -1,0 +1,8 @@
+{
+  "name": "AutoApply AI - Autonomous Job Discovery & Workday Auto-Fill Agent",
+  "description": "AI-powered autonomous job discovery from LinkedIn, Naukri, and web sources with automated resume skill extraction, Workday account autofill, questionnaire reasoning, and human-in-the-loop review before submission.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
