@@ -1,0 +1,1078 @@
+{
+  "users": [
+    {
+      "id": "usr_alex_chen",
+      "email": "alex.chen@example.com",
+      "name": "Alex Chen",
+      "passwordHash": "8e72592f881442aa9874d0644b531585440fa18bf15d4b4a1cdbf8dc644e75724cc57b7b0c37188867e6890d087baf6b8e4606c092594c8ef21a4107f287debe",
+      "salt": "bb232a408de3ca13c978e023c73da7d8",
+      "createdAt": "2026-11-02T10:41:32.728Z",
+      "role": "candidate"
+    },
+    {
+      "id": "usr_priya_sharma",
+      "email": "priya.sharma@example.com",
+      "name": "Priya Sharma",
+      "passwordHash": "833e18cae90f1c216fc6206b5efb8d1abc940b054121f5b28be3270828a63e56feff9822be04d0259760c4cd8080f058e44882237d2805cbac430107fb89bc9d",
+      "salt": "b8c2dd5476e1ca0dd4d67dc38dbe995f",
+      "createdAt": "2026-11-02T10:41:32.728Z",
+      "role": "candidate"
+    },
+    {
+      "id": "usr_admin",
+      "email": "admin@autoapply.ai",
+      "name": "Admin Supervisor",
+      "passwordHash": "10f96b6cfb2f9ea95c610578fe10734be832cf0898e41df820e62383dd774eb91f686475f010a444db766006b12cb3a12f8cbcf89142c381fdc6ff8bc47598fd",
+      "salt": "d856b9cedb0fabdd3934cdb4617c6608",
+      "role": "admin",
+      "createdAt": "2026-11-02T11:28:44.540Z"
+    },
+    {
+      "id": "usr_1dfd756f",
+      "email": "mailto.dheerajchopra@gmail.com",
+      "name": "Dheeraj Chopra",
+      "passwordHash": "75f65a9cfeebfb77c7e69092221fbc09fbccccc9ab0e7b451bda3b9f5ca8712eec41f7586c796a7b1eeea9870c6d911b9e122fbce054d0c6786ee494c36fd1c2",
+      "salt": "988b1805c888dc0a4dda86e0ac97748c",
+      "role": "candidate",
+      "createdAt": "2026-11-02T11:28:50.904Z"
+    },
+    {
+      "id": "usr_9140f1b6",
+      "email": "candidate.verified.1793620029569@example.com",
+      "name": "Verified Candidate",
+      "passwordHash": "6e9a8a7e1fbce129948523e1ba66417c5448ea7544d7bd9799b72a0e4f700ed3fe926534e455f97cd4c753af16c5d96a77b9ee6ecc88aee619e590a3154dbf15",
+      "salt": "1f68ae6130bc64e1f32ba36edffd9412",
+      "role": "candidate",
+      "createdAt": "2026-11-02T11:47:09.591Z"
+    },
+    {
+      "id": "usr_da19b86a",
+      "email": "candidate.verified.1793620039601@example.com",
+      "name": "Verified Candidate",
+      "passwordHash": "cc02c44e4834ac2b505646f14ea88a58ec2e2ee4d320f52e612c1119a98751ce1e2c566c8621dece402a58b725af34f477934e36deaf02601f87291a4fe0d834",
+      "salt": "cbf7cca296b869556c31f614b2f19295",
+      "role": "candidate",
+      "createdAt": "2026-11-02T11:47:19.610Z"
+    }
+  ],
+  "profiles": [
+    {
+      "id": "prof_alex_chen",
+      "userId": "usr_alex_chen",
+      "fullName": "Alex Chen",
+      "email": "alex.chen@example.com",
+      "phone": "+1 (415) 890-1234",
+      "location": "San Francisco, CA",
+      "headline": "Staff Full-Stack Engineer | React, Node.js, Distributed Systems",
+      "summary": "Full-stack software architect with 7+ years building enterprise SaaS platforms, high-throughput APIs, and accessible modern frontends.",
+      "linkedinUrl": "https://linkedin.com/in/alexchen-dev",
+      "githubUrl": "https://github.com/alexchen",
+      "portfolioUrl": "https://alexchen.dev",
+      "yearsOfExperience": 7,
+      "primarySkills": [
+        "TypeScript",
+        "React",
+        "Node.js",
+        "PostgreSQL",
+        "Docker",
+        "AWS",
+        "GraphQL"
+      ],
+      "skills": [
+        {
+          "category": "Frontend",
+          "items": [
+            "React",
+            "TypeScript",
+            "Next.js",
+            "Tailwind CSS",
+            "Redux / Zustand"
+          ]
+        },
+        {
+          "category": "Backend",
+          "items": [
+            "Node.js",
+            "Express",
+            "Go",
+            "GraphQL",
+            "REST APIs",
+            "PostgreSQL",
+            "Redis"
+          ]
+        },
+        {
+          "category": "DevOps & Cloud",
+          "items": [
+            "AWS (ECS, S3, RDS)",
+            "Docker",
+            "Kubernetes",
+            "GitHub Actions CI/CD"
+          ]
+        },
+        {
+          "category": "Architecture",
+          "items": [
+            "Microservices",
+            "Event-Driven Systems",
+            "High-Concurrency Caching"
+          ]
+        }
+      ],
+      "targetRoles": [
+        "Staff Software Engineer",
+        "Senior Full Stack Engineer",
+        "Principal Frontend Architect"
+      ],
+      "targetLocations": [
+        "San Francisco, CA",
+        "Remote (US)",
+        "New York, NY"
+      ],
+      "workdayPreferences": {
+        "workAuthorization": "US_CITIZEN",
+        "legallyAuthorizedToWork": true,
+        "requiresSponsorshipNowOrFuture": false,
+        "veteranStatus": "NOT_A_VETERAN",
+        "disabilityStatus": "NO_DISABILITY",
+        "gender": "MALE",
+        "raceEthnicity": "Asian",
+        "noticePeriodDays": 14,
+        "expectedSalaryUsd": "$185,000 - $215,000",
+        "willingToRelocate": false,
+        "preferredWorkType": "REMOTE",
+        "securityClearance": "NONE"
+      },
+      "updatedAt": "2026-11-02T10:41:32.728Z"
+    },
+    {
+      "id": "prof_priya_sharma",
+      "userId": "usr_priya_sharma",
+      "fullName": "Priya Sharma",
+      "email": "priya.sharma@example.com",
+      "phone": "+1 (206) 555-8971",
+      "location": "Seattle, WA",
+      "headline": "Principal DevOps & Cloud Infrastructure Engineer | AWS, Kubernetes, Terraform",
+      "summary": "Infrastructure architect specialized in zero-downtime multi-cloud deployments, Kubernetes cluster scaling, and platform engineering.",
+      "linkedinUrl": "https://linkedin.com/in/priyasharma-cloud",
+      "githubUrl": "https://github.com/priyasharma",
+      "portfolioUrl": "https://priyasharma.cloud",
+      "yearsOfExperience": 9,
+      "primarySkills": [
+        "Kubernetes",
+        "AWS",
+        "Terraform",
+        "Go",
+        "Python",
+        "Docker",
+        "ArgoCD"
+      ],
+      "skills": [
+        {
+          "category": "Cloud Infrastructure",
+          "items": [
+            "AWS",
+            "Google Cloud",
+            "Terraform",
+            "CloudFormation"
+          ]
+        },
+        {
+          "category": "Containers & Orchestration",
+          "items": [
+            "Kubernetes",
+            "Helm",
+            "Docker",
+            "Istio Service Mesh"
+          ]
+        },
+        {
+          "category": "CI/CD & Observability",
+          "items": [
+            "ArgoCD",
+            "Prometheus",
+            "Grafana",
+            "Datadog",
+            "GitHub Actions"
+          ]
+        }
+      ],
+      "targetRoles": [
+        "Principal DevOps Engineer",
+        "Staff Site Reliability Engineer",
+        "Cloud Infrastructure Architect"
+      ],
+      "targetLocations": [
+        "Seattle, WA",
+        "Remote",
+        "Austin, TX"
+      ],
+      "workdayPreferences": {
+        "workAuthorization": "PERMANENT_RESIDENT",
+        "legallyAuthorizedToWork": true,
+        "requiresSponsorshipNowOrFuture": false,
+        "veteranStatus": "NOT_A_VETERAN",
+        "disabilityStatus": "NO_DISABILITY",
+        "gender": "FEMALE",
+        "raceEthnicity": "Asian / South Asian",
+        "noticePeriodDays": 30,
+        "expectedSalaryUsd": "$195,000 - $230,000",
+        "willingToRelocate": true,
+        "preferredWorkType": "REMOTE",
+        "securityClearance": "NONE"
+      },
+      "updatedAt": "2026-11-02T10:41:32.728Z"
+    },
+    {
+      "id": "prof_usr_1dfd756f",
+      "userId": "usr_1dfd756f",
+      "fullName": "Dheeraj Chopra",
+      "email": "mailto.dheerajchopra@gmail.com",
+      "phone": "+1 415-555-0199",
+      "location": "",
+      "headline": "Software Engineer specializing in TypeScript, React, Node.js",
+      "summary": "Results-driven software professional with experience designing, building, and deploying scalable software architectures with TypeScript, React, Node.js, Python.",
+      "linkedinUrl": "",
+      "githubUrl": "",
+      "portfolioUrl": "",
+      "currentEmployer": "TechCorp Global",
+      "excludedEmployers": [
+        "TechCorp Global"
+      ],
+      "yearsOfExperience": 2,
+      "primarySkills": [
+        "TypeScript",
+        "React",
+        "Node.js",
+        "Python",
+        "Docker",
+        "AWS"
+      ],
+      "skills": [
+        {
+          "category": "Frontend",
+          "items": [
+            "TypeScript",
+            "React"
+          ]
+        },
+        {
+          "category": "Backend",
+          "items": [
+            "Node.js",
+            "Python"
+          ]
+        },
+        {
+          "category": "Cloud & DevOps",
+          "items": [
+            "Docker",
+            "AWS"
+          ]
+        }
+      ],
+      "targetRoles": [
+        "Software Engineer"
+      ],
+      "targetLocations": [
+        "Remote"
+      ],
+      "workdayPreferences": {
+        "workAuthorization": "US_CITIZEN",
+        "legallyAuthorizedToWork": true,
+        "requiresSponsorshipNowOrFuture": false,
+        "veteranStatus": "NOT_A_VETERAN",
+        "disabilityStatus": "NO_DISABILITY",
+        "gender": "DECLINE_TO_STATE",
+        "raceEthnicity": "Decline to State",
+        "noticePeriodDays": 14,
+        "expectedSalaryUsd": "$120,000+",
+        "willingToRelocate": false,
+        "preferredWorkType": "REMOTE",
+        "securityClearance": "NONE"
+      },
+      "updatedAt": "2026-11-02T11:28:58.932Z"
+    },
+    {
+      "id": "prof_usr_9140f1b6",
+      "userId": "usr_9140f1b6",
+      "fullName": "Verified Candidate",
+      "email": "candidate.verified.1793620029569@example.com",
+      "phone": "",
+      "location": "",
+      "headline": "Candidate",
+      "summary": "",
+      "linkedinUrl": "",
+      "githubUrl": "",
+      "portfolioUrl": "",
+      "currentEmployer": "",
+      "excludedEmployers": [],
+      "yearsOfExperience": 0,
+      "primarySkills": [],
+      "skills": [],
+      "targetRoles": [
+        "Software Engineer"
+      ],
+      "targetLocations": [
+        "Remote"
+      ],
+      "workdayPreferences": {
+        "workAuthorization": "US_CITIZEN",
+        "legallyAuthorizedToWork": true,
+        "requiresSponsorshipNowOrFuture": false,
+        "veteranStatus": "NOT_A_VETERAN",
+        "disabilityStatus": "NO_DISABILITY",
+        "gender": "DECLINE_TO_STATE",
+        "raceEthnicity": "Decline to State",
+        "noticePeriodDays": 14,
+        "expectedSalaryUsd": "$120,000+",
+        "willingToRelocate": false,
+        "preferredWorkType": "REMOTE",
+        "securityClearance": "NONE"
+      },
+      "updatedAt": "2026-11-02T11:47:09.591Z"
+    },
+    {
+      "id": "prof_usr_da19b86a",
+      "userId": "usr_da19b86a",
+      "fullName": "Verified Candidate",
+      "email": "candidate.verified.1793620039601@example.com",
+      "phone": "",
+      "location": "",
+      "headline": "Candidate",
+      "summary": "",
+      "linkedinUrl": "",
+      "githubUrl": "",
+      "portfolioUrl": "",
+      "currentEmployer": "",
+      "excludedEmployers": [],
+      "yearsOfExperience": 0,
+      "primarySkills": [],
+      "skills": [],
+      "targetRoles": [
+        "Software Engineer"
+      ],
+      "targetLocations": [
+        "Remote"
+      ],
+      "workdayPreferences": {
+        "workAuthorization": "US_CITIZEN",
+        "legallyAuthorizedToWork": true,
+        "requiresSponsorshipNowOrFuture": false,
+        "veteranStatus": "NOT_A_VETERAN",
+        "disabilityStatus": "NO_DISABILITY",
+        "gender": "DECLINE_TO_STATE",
+        "raceEthnicity": "Decline to State",
+        "noticePeriodDays": 14,
+        "expectedSalaryUsd": "$120,000+",
+        "willingToRelocate": false,
+        "preferredWorkType": "REMOTE",
+        "securityClearance": "NONE"
+      },
+      "updatedAt": "2026-11-02T11:47:19.610Z"
+    }
+  ],
+  "resumes": [
+    {
+      "id": "res_a13c5ffa",
+      "userId": "usr_1dfd756f",
+      "fileName": "Dheeraj_Chopra_Resume.md",
+      "fileType": "md",
+      "fileSize": 1024,
+      "rawText": "# Dheeraj Chopra\nEmail: mailto.dheerajchopra@gmail.com\nPhone: +1 415-555-0199\n\n## Experience\nTechCorp Global - Staff Engineer (2021 - Present)\n- Architected React and TypeScript micro-frontends.\n\n## Skills\nReact, TypeScript, Node.js, Python, AWS, Docker",
+      "parsedProfile": {
+        "fullName": "Dheeraj Chopra",
+        "email": "mailto.dheerajchopra@gmail.com",
+        "phone": "+1 415-555-0199",
+        "headline": "Software Engineer specializing in TypeScript, React, Node.js",
+        "summary": "Results-driven software professional with experience designing, building, and deploying scalable software architectures with TypeScript, React, Node.js, Python.",
+        "skills": [
+          "TypeScript",
+          "React",
+          "Node.js",
+          "Python",
+          "Docker",
+          "AWS"
+        ],
+        "skillCategories": [
+          {
+            "category": "Frontend",
+            "items": [
+              "TypeScript",
+              "React"
+            ]
+          },
+          {
+            "category": "Backend",
+            "items": [
+              "Node.js",
+              "Python"
+            ]
+          },
+          {
+            "category": "Cloud & DevOps",
+            "items": [
+              "Docker",
+              "AWS"
+            ]
+          }
+        ],
+        "workExperience": [
+          {
+            "company": "TechCorp Global",
+            "title": "Software Engineer",
+            "location": "Remote / Hybrid",
+            "startDate": "2021-01",
+            "endDate": "Present",
+            "isCurrent": true,
+            "bulletPoints": [
+              "Architected and delivered core modules using TypeScript and React.",
+              "Improved API throughput and reduced system response times by 35%.",
+              "Collaborated across agile squads to deliver user-centric features on schedule."
+            ]
+          }
+        ],
+        "education": [
+          {
+            "institution": "State University of Technology",
+            "degree": "Bachelor of Science",
+            "fieldOfStudy": "Computer Science & Engineering",
+            "graduationYear": "2021"
+          }
+        ],
+        "certifications": [
+          "Professional Cloud Developer"
+        ],
+        "currentEmployer": "TechCorp Global"
+      },
+      "uploadedAt": "2026-11-02T11:28:58.932Z"
+    }
+  ],
+  "jobs": [
+    {
+      "title": "Senior Full Stack Engineer",
+      "company": "Enterprise Cloud Corp",
+      "location": "San Francisco, CA",
+      "remoteType": "Remote",
+      "employmentType": "Full-time",
+      "salaryRange": "70,000 - 10,000",
+      "source": "Workday Portal",
+      "sourceUrl": "https://enterprisecloud.wd1.myworkdayjobs.com/careers/job/123",
+      "portalType": "workday",
+      "description": "Looking for a Senior Full Stack Engineer with React, TypeScript, Node.js.",
+      "requiredSkills": [
+        "React",
+        "TypeScript",
+        "Node.js",
+        "Distributed Systems"
+      ],
+      "matchScore": 92,
+      "matchingSkills": [
+        "React",
+        "TypeScript",
+        "Node.js"
+      ],
+      "missingSkills": [
+        "Distributed Systems"
+      ],
+      "fitRationale": "Strong profile alignment with technical requirements.",
+      "postedDaysAgo": 5,
+      "id": "job_1ab8844e",
+      "userId": "usr_da19b86a",
+      "discoveredAt": "2026-11-02T11:47:19.620Z",
+      "postedDate": "2026-11-02T11:47:19.620Z",
+      "isStale": false,
+      "isConflictOfInterest": false,
+      "status": "submitted",
+      "applicationId": "app_1c54e085"
+    },
+    {
+      "id": "job_salesforce_staff",
+      "userId": "usr_alex_chen",
+      "title": "Staff Full Stack Engineer - Core Cloud",
+      "company": "Salesforce",
+      "location": "San Francisco, CA / Remote",
+      "remoteType": "Remote",
+      "employmentType": "Full-time",
+      "salaryRange": "$175,000 - $215,000 USD",
+      "source": "Workday Portal",
+      "sourceUrl": "https://salesforce.wd1.myworkdayjobs.com/Careers/job/Staff-Full-Stack-Engineer-Core-Cloud",
+      "portalType": "workday",
+      "workdayTenantId": "salesforce",
+      "description": "Build mission-critical collaboration engines and high-concurrency microservices powering Salesforce Customer 360.",
+      "requiredSkills": [
+        "TypeScript",
+        "React",
+        "Node.js",
+        "PostgreSQL",
+        "Docker",
+        "AWS"
+      ],
+      "matchScore": 96,
+      "matchingSkills": [
+        "TypeScript",
+        "React",
+        "Node.js",
+        "PostgreSQL",
+        "Docker",
+        "AWS"
+      ],
+      "missingSkills": [],
+      "fitRationale": "100% skill alignment with candidate primary stack and 7+ years distributed systems experience.",
+      "status": "pending_review",
+      "discoveredAt": "2026-11-02T06:41:32.728Z",
+      "applicationId": "app_salesforce_staff"
+    },
+    {
+      "id": "job_adobe_senior",
+      "userId": "usr_alex_chen",
+      "title": "Senior Software Engineer, Experience Platform",
+      "company": "Adobe",
+      "location": "San Jose, CA / Remote",
+      "remoteType": "Remote",
+      "employmentType": "Full-time",
+      "salaryRange": "$165,000 - $198,000 USD",
+      "source": "Workday Portal",
+      "sourceUrl": "https://adobe.wd5.myworkdayjobs.com/external_experienced/job/Senior-Software-Engineer",
+      "portalType": "workday",
+      "workdayTenantId": "adobe",
+      "description": "Design next-generation real-time customer data platform interfaces and streaming analytics pipelines.",
+      "requiredSkills": [
+        "React",
+        "TypeScript",
+        "GraphQL",
+        "Docker",
+        "State Management"
+      ],
+      "matchScore": 92,
+      "matchingSkills": [
+        "React",
+        "TypeScript",
+        "GraphQL",
+        "Docker"
+      ],
+      "missingSkills": [
+        "State Management"
+      ],
+      "fitRationale": "Exceptional fit for React frontend architecture and GraphQL API aggregation.",
+      "status": "discovered",
+      "discoveredAt": "2026-11-02T02:41:32.728Z"
+    },
+    {
+      "id": "job_linkedin_netflix",
+      "userId": "usr_alex_chen",
+      "title": "Senior UI Platform Engineer",
+      "company": "Netflix",
+      "location": "Los Gatos, CA / Remote",
+      "remoteType": "Remote",
+      "employmentType": "Full-time",
+      "salaryRange": "$220,000 - $280,000 USD",
+      "source": "LinkedIn",
+      "sourceUrl": "https://www.linkedin.com/jobs/view/senior-ui-platform-engineer-netflix",
+      "portalType": "workday",
+      "workdayTenantId": "netflix",
+      "description": "Empower hundreds of content production teams globally with fast, accessible web tooling and micro-frontends.",
+      "requiredSkills": [
+        "TypeScript",
+        "React",
+        "Node.js",
+        "Performance Profiling",
+        "Web Vitals"
+      ],
+      "matchScore": 90,
+      "matchingSkills": [
+        "TypeScript",
+        "React",
+        "Node.js"
+      ],
+      "missingSkills": [
+        "Performance Profiling"
+      ],
+      "fitRationale": "Strong architectural pedigree matching Netflix UI platform standards.",
+      "status": "discovered",
+      "discoveredAt": "2026-11-01T22:41:32.728Z"
+    },
+    {
+      "id": "job_naukri_infosys",
+      "userId": "usr_alex_chen",
+      "title": "Lead Architect - Cloud Native Applications",
+      "company": "Infosys",
+      "location": "Bangalore / Hybrid",
+      "remoteType": "Hybrid",
+      "employmentType": "Full-time",
+      "salaryRange": "₹34,00,000 - ₹44,00,000 INR",
+      "source": "Naukri",
+      "sourceUrl": "https://www.naukri.com/job-listings-lead-architect-cloud-native-infosys",
+      "portalType": "direct",
+      "description": "Enterprise modernization architecting high-availability cloud applications and distributed backends.",
+      "requiredSkills": [
+        "Node.js",
+        "React",
+        "AWS",
+        "Docker",
+        "Kubernetes"
+      ],
+      "matchScore": 93,
+      "matchingSkills": [
+        "Node.js",
+        "React",
+        "AWS",
+        "Docker"
+      ],
+      "missingSkills": [
+        "Kubernetes"
+      ],
+      "fitRationale": "Deep expertise in cloud-native Node.js and AWS deployment pipelines.",
+      "status": "discovered",
+      "discoveredAt": "2026-11-01T14:41:32.728Z"
+    }
+  ],
+  "applications": [
+    {
+      "id": "app_1c54e085",
+      "userId": "usr_da19b86a",
+      "jobId": "job_1ab8844e",
+      "jobTitle": "Senior Full Stack Engineer",
+      "company": "Enterprise Cloud Corp",
+      "workdayPortalUrl": "https://enterprisecloud.wd1.myworkdayjobs.com/careers/job/123",
+      "generatedAccount": {
+        "username": "candidate.verified.1793620039601@example.com",
+        "generatedEmail": "candidate.verified.1793620039601@example.com",
+        "temporaryPasswordMasked": "WkDay$760617#2026",
+        "accountCreatedAt": "2026-11-02T11:47:19.626Z"
+      },
+      "contactInformation": {
+        "legalFirstName": "Verified",
+        "legalLastName": "Candidate",
+        "email": "candidate.verified.1793620039601@example.com",
+        "phone": "+1 (555) 019-2834",
+        "addressLine1": "100 Innovation Way",
+        "city": "San Francisco",
+        "state": "CA",
+        "postalCode": "94016",
+        "country": "United States"
+      },
+      "workExperience": [
+        {
+          "company": "Leading Software Engineering Firm",
+          "title": "Candidate",
+          "location": "Remote",
+          "startDate": "2022-01",
+          "endDate": "Present",
+          "isCurrent": true,
+          "bulletPoints": [
+            "Built scalable software applications utilizing .",
+            "Optimized data flows and system performance across production microservices.",
+            "Collaborated cross-functionally to deliver high-priority product roadmaps on time."
+          ]
+        }
+      ],
+      "education": [
+        {
+          "institution": "Accredited University",
+          "degree": "Bachelor of Science (B.S.)",
+          "fieldOfStudy": "Computer Science & Engineering",
+          "graduationYear": "2020"
+        }
+      ],
+      "questionAnswers": [
+        {
+          "id": "q-1",
+          "question": "Are you legally authorized to work in the country of employment?",
+          "category": "legal",
+          "answer": "Yes",
+          "reasoning": "Answered directly from candidate's declared legal authorization status.",
+          "confidence": 100,
+          "isUserReviewed": false
+        },
+        {
+          "id": "q-2",
+          "question": "Will you now or in the future require employer sponsorship for employment visa status (e.g. H-1B, TN, etc.)?",
+          "category": "legal",
+          "answer": "No",
+          "reasoning": "Answered from profile declaration regarding visa sponsorship requirements.",
+          "confidence": 100,
+          "isUserReviewed": false
+        },
+        {
+          "id": "q-3",
+          "question": "How many years of professional experience do you have with React?",
+          "category": "technical",
+          "answer": "0 years",
+          "reasoning": "Extracted from total years of experience across candidate's career timeline.",
+          "confidence": 95,
+          "isUserReviewed": false
+        },
+        {
+          "id": "q-4",
+          "question": "What is your standard notice period or earliest start date?",
+          "category": "behavioral",
+          "answer": "14 days notice (available to start promptly upon completion).",
+          "reasoning": "Pulled from candidate's current employment transition schedule.",
+          "confidence": 100,
+          "isUserReviewed": false
+        },
+        {
+          "id": "q-5",
+          "question": "What are your compensation expectations for this position?",
+          "category": "compensation",
+          "answer": "$120,000+",
+          "reasoning": "Matches candidate's target compensation baseline.",
+          "confidence": 90,
+          "isUserReviewed": false
+        }
+      ],
+      "tailoredCoverLetter": "Dear Hiring Team at Enterprise Cloud Corp,\n\nI am writing to express my strong enthusiasm for the Senior Full Stack Engineer role at Enterprise Cloud Corp. With over 0 years of experience specializing in React, TypeScript, Node.js, I have built high-throughput web applications and scalable distributed systems that deliver measurable business impact.\n\nIn my recent projects, I have architected mission-critical features, optimized end-to-end performance, and collaborated cross-functionally with product and engineering teams. The mission of Enterprise Cloud Corp deeply aligns with my passion for engineering excellence and scalable architecture.\n\nI look forward to discussing how my experience with React and TypeScript can contribute to your engineering milestones. Thank you for your consideration.\n\nWarm regards,\nVerified Candidate",
+      "status": "submitted",
+      "workdayCandidateStatus": "Under Recruiter Review",
+      "lastStatusSyncAt": "2026-11-02T11:47:21.155Z",
+      "statusHistory": [
+        {
+          "timestamp": "2026-11-02T11:47:21.155Z",
+          "status": "Application Received",
+          "notes": "Autofilled from verified resume data. Staged for candidate final review."
+        },
+        {
+          "timestamp": "2026-11-02T11:47:21.189Z",
+          "status": "Under Recruiter Review",
+          "notes": "Successfully submitted with Workday confirmation WD-MVZ7295W-67420D."
+        }
+      ],
+      "emailVerification": {
+        "required": true,
+        "sentTo": "candidate.verified.1793620039601@example.com",
+        "verificationCode": "655733",
+        "isVerified": true,
+        "sentAt": "2026-11-02T11:47:21.155Z",
+        "expiresAt": "2026-11-02T12:02:21.155Z",
+        "verifiedAt": "2026-11-02T11:47:21.185Z"
+      },
+      "submissionAudit": {
+        "submittedAt": "2026-11-02T11:47:21.189Z",
+        "confirmationCode": "WD-MVZ7295W-67420D",
+        "workdaySubmissionId": "WD_REQ_e2cf8e7d",
+        "ipAddress": "127.0.0.1",
+        "auditLog": [
+          {
+            "timestamp": "2026-11-02T11:47:21.155Z",
+            "step": "Autofill initiated for Enterprise Cloud Corp portal",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.155Z",
+            "step": "Conflict of interest check: Enterprise Cloud Corp is not candidate's current employer (PASSED)",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.155Z",
+            "step": "Posting age check: 5 days ago (<= 45 days limit PASSED)",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.155Z",
+            "step": "Workday candidate credentials set to candidate login email (candidate.verified.1793620039601@example.com) from Vault",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.155Z",
+            "step": "Workday email verification code (655733) dispatched to candidate.verified.1793620039601@example.com",
+            "status": "info"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.155Z",
+            "step": "AI resolved 5 questionnaire items with verified rationales",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.155Z",
+            "step": "Staged application package locked for mandatory candidate review & email OTP verification",
+            "status": "info"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.185Z",
+            "step": "Workday candidate email verified successfully for candidate.verified.1793620039601@example.com",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.189Z",
+            "step": "Candidate completed review and authorized final submission",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.189Z",
+            "step": "Dispatched to Workday portal (Enterprise Cloud Corp) with encrypted payload",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T11:47:21.189Z",
+            "step": "Workday portal responded HTTP 200 OK - Receipt: WD-MVZ7295W-67420D",
+            "status": "ok"
+          }
+        ]
+      },
+      "createdAt": "2026-11-02T11:47:21.155Z",
+      "updatedAt": "2026-11-02T11:47:21.189Z"
+    },
+    {
+      "id": "app_salesforce_staff",
+      "userId": "usr_alex_chen",
+      "jobId": "job_salesforce_staff",
+      "jobTitle": "Staff Full Stack Engineer - Core Cloud",
+      "company": "Salesforce",
+      "workdayPortalUrl": "https://salesforce.wd1.myworkdayjobs.com/Careers/job/Staff-Full-Stack-Engineer-Core-Cloud",
+      "generatedAccount": {
+        "username": "alex.chen+sf@autoapply.dev",
+        "generatedEmail": "alex.chen+sf@autoapply.dev",
+        "temporaryPasswordMasked": "WkDay$fd086b50#2026",
+        "accountCreatedAt": "2026-11-02T10:11:32.729Z"
+      },
+      "contactInformation": {
+        "legalFirstName": "Alex",
+        "legalLastName": "Chen",
+        "email": "alex.chen@example.com",
+        "phone": "+1 (415) 890-1234",
+        "addressLine1": "450 Mission St, Suite 1200",
+        "city": "San Francisco",
+        "state": "CA",
+        "postalCode": "94105",
+        "country": "United States"
+      },
+      "workExperience": [
+        {
+          "company": "HyperScale Cloud Tech",
+          "title": "Senior Full Stack Engineer",
+          "location": "San Francisco, CA",
+          "startDate": "2021-03",
+          "endDate": "Present",
+          "isCurrent": true,
+          "bulletPoints": [
+            "Architected distributed event-driven microservices serving 4.5M DAU with 99.99% availability.",
+            "Spearheaded migration to React 19 and modular design systems, slashing first contentful paint by 42%.",
+            "Mentored 6 junior/mid engineers and established zero-regression automated CI/CD testing suites."
+          ]
+        },
+        {
+          "company": "OmniVenture Software",
+          "title": "Full Stack Developer",
+          "location": "San Francisco, CA",
+          "startDate": "2019-01",
+          "endDate": "2021-02",
+          "isCurrent": false,
+          "bulletPoints": [
+            "Built real-time analytics dashboards using TypeScript, Node.js, and Redis pub/sub streams.",
+            "Optimized complex PostgreSQL relational queries reducing database p95 query latency from 820ms to 45ms."
+          ]
+        }
+      ],
+      "education": [
+        {
+          "institution": "University of California, Berkeley",
+          "degree": "Bachelor of Science (B.S.)",
+          "fieldOfStudy": "Computer Science",
+          "graduationYear": "2018",
+          "gpa": "3.82"
+        }
+      ],
+      "questionAnswers": [
+        {
+          "id": "q-1",
+          "question": "Are you legally authorized to work in the United States without restriction?",
+          "category": "legal",
+          "answer": "Yes",
+          "reasoning": "Verified from candidate Workday preferences (US Citizen declaration).",
+          "confidence": 100,
+          "isUserReviewed": true
+        },
+        {
+          "id": "q-2",
+          "question": "Will you now or in the future require visa sponsorship (e.g. H-1B, TN, etc.) to continue employment with Salesforce?",
+          "category": "legal",
+          "answer": "No",
+          "reasoning": "Verified from candidate declared Workday immigration profile.",
+          "confidence": 100,
+          "isUserReviewed": true
+        },
+        {
+          "id": "q-3",
+          "question": "How many years of professional experience do you have architecting production Node.js and React enterprise applications?",
+          "category": "technical",
+          "answer": "7+ years of continuous hands-on experience designing and scaling full-stack web architectures.",
+          "reasoning": "Extracted from combined timeline across HyperScale and OmniVenture tenures.",
+          "confidence": 98,
+          "isUserReviewed": false
+        },
+        {
+          "id": "q-4",
+          "question": "Please summarize a significant technical challenge you solved involving distributed systems or microservices.",
+          "category": "behavioral",
+          "answer": "At HyperScale Cloud Tech, I re-architected our ingestion microservices to handle 4.5M DAU by replacing synchronous HTTP bottlenecks with an event-driven Redis/Kafka stream and idempotency layer, which prevented data loss during traffic spikes and reduced p99 latency by 68%.",
+          "reasoning": "Directly matched against job description microservices and high-throughput requirements.",
+          "confidence": 96,
+          "isUserReviewed": false
+        },
+        {
+          "id": "q-5",
+          "question": "What is your standard notice period with your current employer?",
+          "category": "behavioral",
+          "answer": "14 calendar days (two weeks notice).",
+          "reasoning": "Matches candidate profile notice period configuration.",
+          "confidence": 100,
+          "isUserReviewed": false
+        },
+        {
+          "id": "q-6",
+          "question": "What are your annual base compensation expectations?",
+          "category": "compensation",
+          "answer": "$185,000 - $210,000 USD, with flexibility depending on total equity and benefits.",
+          "reasoning": "Aligned with candidate declared salary band and Salesforce posted range.",
+          "confidence": 95,
+          "isUserReviewed": false
+        }
+      ],
+      "tailoredCoverLetter": "Dear Salesforce Talent Acquisition Team,\n\nI am writing to enthusiastically apply for the Staff Full Stack Engineer - Core Cloud position. Having architected cloud-scale microservices and responsive user experiences for over seven years, Salesforce's commitment to reliability and customer trust deeply resonates with my professional ethos.\n\nIn my recent role at HyperScale Cloud Tech, I engineered distributed backend services handling over 4.5M daily active users and led the frontend modernization to modern React architectures. My core toolkit—TypeScript, React, Node.js, and AWS—mirrors the exact demands of your Core Cloud team. Furthermore, I have driven initiatives that reduced database query latency by over 80% and instituted robust testing pipelines to ensure continuous delivery with zero downtime.\n\nI welcome the opportunity to discuss how my technical leadership and passion for high-concurrency systems will help Salesforce deliver the next generation of cloud innovation.\n\nSincerely,\nAlex Chen",
+      "status": "pending_review",
+      "submissionAudit": {
+        "auditLog": [
+          {
+            "timestamp": "2026-11-02T10:11:32.729Z",
+            "step": "Workday candidate portal account provisioned",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T10:12:22.729Z",
+            "step": "Extracted resume data mapped into Workday schema",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T10:13:12.729Z",
+            "step": "AI solved 6 screening questions with verified justifications",
+            "status": "ok"
+          },
+          {
+            "timestamp": "2026-11-02T10:14:02.729Z",
+            "step": "Prepared staged review payload awaiting candidate final approval",
+            "status": "info"
+          }
+        ]
+      },
+      "createdAt": "2026-11-02T10:11:32.729Z",
+      "updatedAt": "2026-11-02T10:14:02.729Z"
+    }
+  ],
+  "agentLogs": [
+    {
+      "id": "log_seed_1",
+      "userId": "usr_alex_chen",
+      "triggeredAt": "2026-11-02T06:41:32.729Z",
+      "status": "completed",
+      "keywords": [
+        "Staff Software Engineer",
+        "Full Stack",
+        "React",
+        "Node.js"
+      ],
+      "sources": [
+        "LinkedIn",
+        "Workday Portal",
+        "Naukri"
+      ],
+      "jobsFound": 4,
+      "message": "Found 4 high-match tech openings matching your target roles and skills.",
+      "details": [
+        "Searched Salesforce Workday career portal (1 match found, 96% fit)",
+        "Searched Adobe Workday career portal (1 match found, 92% fit)",
+        "Scanned LinkedIn Tech Feed (1 match found, 90% fit)",
+        "Scanned Naukri India/Global Engineering board (1 match found, 93% fit)"
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "id": "acc_6479bdf9",
+      "userId": "usr_da19b86a",
+      "company": "Enterprise Cloud Corp",
+      "portalDomain": "enterprisecloudcorp.wd1.myworkdayjobs.com",
+      "username": "candidate.verified.1793620039601@example.com",
+      "temporaryPasswordMasked": "WkDay$760617#2026",
+      "createdAt": "2026-11-02T11:47:19.626Z",
+      "lastUsedAt": "2026-11-02T11:47:19.626Z",
+      "linkedApplicationIds": [
+        "app_1c54e085"
+      ]
+    }
+  ],
+  "systemAuditLogs": [
+    {
+      "userId": "usr_da19b86a",
+      "timestamp": "2026-11-02T11:47:21.189Z",
+      "category": "submission",
+      "action": "APPLICATION_SUBMITTED_WORKDAY",
+      "details": "Application submitted to Enterprise Cloud Corp (Senior Full Stack Engineer). Workday Receipt: WD-MVZ7295W-67420D.",
+      "severity": "success",
+      "id": "aud_e34756db"
+    },
+    {
+      "userId": "usr_da19b86a",
+      "timestamp": "2026-11-02T11:47:21.185Z",
+      "category": "submission",
+      "action": "WORKDAY_EMAIL_VERIFIED",
+      "details": "Workday email verification confirmed for Enterprise Cloud Corp application (candidate.verified.1793620039601@example.com).",
+      "severity": "success",
+      "id": "aud_99ae0025"
+    },
+    {
+      "userId": "usr_da19b86a",
+      "timestamp": "2026-11-02T11:47:19.626Z",
+      "category": "autofill",
+      "action": "PROVISIONED_WORKDAY_ACCOUNT",
+      "details": "Configured Workday applicant credentials for Enterprise Cloud Corp using candidate login email (candidate.verified.1793620039601@example.com). Stored in Credential Vault.",
+      "severity": "success",
+      "id": "aud_5690a659"
+    },
+    {
+      "userId": "usr_da19b86a",
+      "timestamp": "2026-11-02T11:47:19.610Z",
+      "category": "security",
+      "action": "USER_REGISTERED",
+      "details": "User account created for candidate.verified.1793620039601@example.com (Role: candidate). Isolated session provisioned.",
+      "severity": "success",
+      "id": "aud_ad511be4"
+    },
+    {
+      "userId": "usr_9140f1b6",
+      "timestamp": "2026-11-02T11:47:09.592Z",
+      "category": "security",
+      "action": "USER_REGISTERED",
+      "details": "User account created for candidate.verified.1793620029569@example.com (Role: candidate). Isolated session provisioned.",
+      "severity": "success",
+      "id": "aud_1d7eec5e"
+    },
+    {
+      "userId": "usr_1dfd756f",
+      "timestamp": "2026-11-02T11:28:58.932Z",
+      "category": "discovery",
+      "action": "RESUME_PARSED_AND_SYNCED",
+      "details": "Parsed Dheeraj_Chopra_Resume.md (6 skills extracted). Detected current employer: \"TechCorp Global\" added to conflict-of-interest exclusion list.",
+      "severity": "success",
+      "id": "aud_acc1cee9"
+    },
+    {
+      "userId": "usr_1dfd756f",
+      "timestamp": "2026-11-02T11:28:50.905Z",
+      "category": "security",
+      "action": "USER_REGISTERED",
+      "details": "User account created for mailto.dheerajchopra@gmail.com (Role: candidate). Isolated session provisioned.",
+      "severity": "success",
+      "id": "aud_f40a0093"
+    },
+    {
+      "userId": "usr_alex_chen",
+      "timestamp": "2026-11-02T11:05:28.690Z",
+      "category": "security",
+      "action": "SESSION_SWITCH",
+      "details": "Switched active session to Alex Chen (alex.chen@example.com). Zero data bleed verified.",
+      "severity": "info",
+      "id": "aud_b41ff8ba"
+    }
+  ]
+}
