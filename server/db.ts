@@ -46,6 +46,15 @@ class DatabaseService {
         if (!stored.accounts) stored.accounts = [];
         if (!stored.systemAuditLogs) stored.systemAuditLogs = [];
         if (!stored.discoveryJobs) stored.discoveryJobs = [];
+        // Repair legacy/partial jobs once at hydration: real Gemini output
+        // may lack the skill arrays the UI assumes. One pass, then persisted.
+        stored.jobs = stored.jobs.map((j: any) => ({
+          ...j,
+          requiredSkills: Array.isArray(j.requiredSkills) ? j.requiredSkills : [],
+          matchingSkills: Array.isArray(j.matchingSkills) ? j.matchingSkills : [],
+          missingSkills: Array.isArray(j.missingSkills) ? j.missingSkills : [],
+          description: j.description ?? '',
+        }));
         if (!Array.isArray(stored.jobs)) stored.jobs = [];
         if (!Array.isArray(stored.profiles)) stored.profiles = [];
         if (!Array.isArray(stored.resumes)) stored.resumes = [];

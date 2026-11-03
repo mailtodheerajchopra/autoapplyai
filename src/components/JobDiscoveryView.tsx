@@ -396,23 +396,23 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
                     <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
                       Matching Skills:
                     </span>
-                    {job.matchingSkills.map((skill, i) => (
+                    {(job.matchingSkills || []).map((skill, i) => (
                       <span key={i} className="text-emerald-400 font-medium">
                         {skill}
-                        {i < job.matchingSkills.length - 1 ? ' ·' : ''}
+                        {i < (job.matchingSkills || []).length - 1 ? ' ·' : ''}
                       </span>
                     ))}
                   </div>
 
-                  {job.missingSkills.length > 0 && (
+                  {(job.missingSkills || []).length > 0 && (
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                       <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">
                         Target Skills to Highlight:
                       </span>
-                      {job.missingSkills.map((skill, i) => (
+                      {(job.missingSkills || []).map((skill, i) => (
                         <span key={i} className="text-slate-400">
                           {skill}
-                          {i < job.missingSkills.length - 1 ? ' ·' : ''}
+                          {i < (job.missingSkills || []).length - 1 ? ' ·' : ''}
                         </span>
                       ))}
                     </div>

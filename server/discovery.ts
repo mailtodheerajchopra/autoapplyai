@@ -116,6 +116,13 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
     discoveredAt: new Date().toISOString(),
     isStale: false,
     isConflictOfInterest: false,
+    // Gemini's responseSchema isn't strictly enforced — the model may omit
+    // array fields, which would crash the UI's job cards. Normalize here.
+    requiredSkills: Array.isArray(j.requiredSkills) ? j.requiredSkills : [],
+    matchingSkills: Array.isArray(j.matchingSkills) ? j.matchingSkills : [],
+    missingSkills: Array.isArray(j.missingSkills) ? j.missingSkills : [],
+    description: j.description || '',
+    fitRationale: j.fitRationale || '',
   }));
 
   db.addJobs(newJobs);
