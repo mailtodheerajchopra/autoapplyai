@@ -78,6 +78,62 @@ export function filterConflictJobs<T extends { company: string }>(jobs: T[], exc
   });
 }
 
+/**
+ * Enforce 3 — STRICT PREFERRED-LOCATION RULE: a posting is only visible if it
+ * is in the candidate's own country, matched a configured target location, or
+ * is explicitly marked Remote ("person in India may not apply for a US job
+ * unless it is mentioned as remote").
+ * Country detection: explicit country words, plus "City, ST" US state suffixes.
+ */
+const COUNTRY_HINTS: Array<[RegExp, string]> = [
+  [/india/i, 'IN'],
+  [/\b(?:usa|u\.s\.a|united states of america|united states|u\.s\b)/i, 'US'],
+  [/(?:united kingdom|\bengland\b|\bscotland\b)/i, 'GB'],
+  [/\bcanada\b/i, 'CA'],
+  [/\bgermany\b/i, 'DE'], [/\bfrance\b/i, 'FR'], [/\bnetherlands\b/i, 'NL'],
+  [/\bireland\b/i, 'IE'], [/\bsingapore\b/i, 'SG'], [/\baustralia\b/i, 'AU'],
+  [/\bjapan\b/i, 'JP'], [/\bchina\b/i, 'CN'], [/\bbrazil\b/i, 'BR'],
+  [/\bmexico\b/i, 'MX'], [/\bpoland\b/i, 'PL'], [/\bswitzerland\b/i, 'CH'],
+  [/\bphilippines\b/i, 'PH'], [/\bvietnam\b/i, 'VN'], [/\bnigeria\b/i, 'NG'],
+];
+
+export function countryOf(location: string): string | null {
+  if (!location) return null;
+  for (const [re, code] of COUNTRY_HINTS) if (re.test(location)) return code;
+  // "San Francisco, CA", "New York, NY" — US state suffix pattern → US
+  if (/(?:,|\s|\()\s*[A-Z]{2}(?:$|,|\s|\)|\/)/.test(location)) return 'US';
+  return null;
+}
+
+export function filterLocationJobs<T extends { location?: string; remoteType?: string }>(
+  jobs: T[],
+  profileLocation: string,
+  targetLocations: string[] = [],
+): { kept: T[]; dropped: number } {
+  const profileCountry = countryOf(profileLocation);
+  const targets = targetLocations.filter(Boolean).map((t) => t.toLowerCase());
+  let dropped = 0;
+  const kept = jobs.filter((j) => {
+    const isRemote = (j.remoteType || '').toLowerCase() === 'remote';
+    let compatible: boolean;
+    if (isRemote) {
+      compatible = true;
+    } else if (targets.length) {
+      const loc = (j.location || '').toLowerCase();
+      compatible = targets.some((t) => loc.includes(t));
+      if (!compatible && profileCountry && countryOf(j.location || '') === profileCountry) compatible = true;
+    } else if (profileCountry) {
+      const jobCountry = countryOf(j.location || '');
+      compatible = !jobCountry || jobCountry === profileCountry;
+    } else {
+      compatible = true; // no location signal — never over-filter
+    }
+    if (!compatible) dropped++;
+    return compatible;
+  });
+  return { kept, dropped };
+}
+
 function cacheKey(userId: string, profile: CandidateProfile, options: DiscoveryOptions): string {  const fingerprint = JSON.stringify({
     u: userId,
     o: { k: options.keywords, s: options.sources, l: options.location, r: options.remoteOnly, m: options.minMatchScore },
@@ -117,7 +173,15 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
   const droppedConflictCount = freshJobs.length - eligibleJobs.length;
   await markStage(userId, jobId, 'running', 75, `Conflict shield: ${droppedConflictCount} blocked`);
 
-  const newJobs: JobPosting[] = eligibleJobs.map((j) => ({
+  // Enforce 3: preferred-location guard (own country / targets / Remote).
+  const { kept: locatedJobs, dropped: droppedLocationCount } = filterLocationJobs(
+    eligibleJobs, profile.location || '', profile.targetLocations || [],
+  );
+  if (droppedLocationCount > 0) {
+    await markStage(userId, jobId, 'running', 80, `Location policy: ${droppedLocationCount} beyond preferred region`);
+  }
+
+  const newJobs: JobPosting[] = locatedJobs.map((j) => ({
     ...j,
     id: 'job_' + crypto.randomUUID().slice(0, 8),
     userId,
@@ -141,12 +205,13 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
     timestamp: new Date().toISOString(),
     category: 'discovery',
     action: 'AGENT_DISCOVERY_COMPLETED',
-    details: `Agent scanned portals. Stored ${newJobs.length} active matching jobs. Filtered out ${droppedStaleCount} stale jobs (>45 days) and intercepted ${droppedConflictCount} current employer openings.`,
+    details: `Agent scanned portals. Stored ${newJobs.length} active matching jobs. Filtered out ${droppedStaleCount} stale jobs (>45 days), intercepted ${droppedConflictCount} current employer openings, and ${droppedLocationCount} postings outside the preferred region (Remote-only kept).`,
     severity: 'success',
     metadata: {
       keywords: options.keywords || profile.targetRoles,
       staleFiltered: droppedStaleCount,
       conflictsBlocked: droppedConflictCount,
+      locationFiltered: droppedLocationCount,
     },
   });
 
@@ -176,9 +241,7 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
     },
     jobIds: newJobs.map(j => j.id),
   };
-}
-
-async function runJob(userId: string, jobId: string, profile: CandidateProfile, options: DiscoveryOptions): Promise<void> {
+}async function runJob(userId: string, jobId: string, profile: CandidateProfile, options: DiscoveryOptions): Promise<void> {
   try {
     const { result, jobIds } = await executeDiscovery(userId, jobId, profile, options);
     db.updateDiscoveryJob(userId, jobId, {
@@ -260,6 +323,7 @@ export function startDiscovery(userId: string, options: DiscoveryOptions): { job
         message: `Served ${adapted.jobs.length} qualified roles from the shared discovery pool (shared scan, zero extra agent quota).`,
         details: [
           ...adapted.jobs.map((j) => `${j.company}: ${j.title} (${j.matchScore}% fit, Posted ${j.postedDaysAgo}d ago)`),
+          ...(adapted.droppedLocation > 0 ? [`Location policy: ${adapted.droppedLocation} postings outside preferred region (Remote-only kept)`] : []),
           `Pool age: ${Math.max(0, Math.round((Date.now() - new Date(poolEntry.fetchedAt).getTime()) / 3_600_000))}h since the market scan.`,
         ],
       });
@@ -423,7 +487,7 @@ export function adaptPoolJobsForUser(
   entry: Pick<DiscoveryPoolEntry, 'jobs' | 'fetchedAt'>,
   profile: CandidateProfile,
   options: DiscoveryOptions,
-): { jobs: JobPosting[]; droppedStale: number; droppedConflict: number; droppedScore: number } | null {
+): { jobs: JobPosting[]; droppedStale: number; droppedConflict: number; droppedLocation: number; droppedScore: number } | null {
   const now = Date.now();
   const ageBumpDays = Math.floor((now - new Date(entry.fetchedAt).getTime()) / 86_400_000);
 
@@ -439,9 +503,14 @@ export function adaptPoolJobsForUser(
   const nonConflict = filterConflictJobs(fresh, excluded);
   const droppedConflict = fresh.length - nonConflict.length;
 
+  // Enforce 3: preferred-location (same country, target locations, or Remote).
+  const { kept: located, dropped: droppedLocation } = filterLocationJobs(
+    nonConflict, profile.location || '', profile.targetLocations || [],
+  );
+
   const minScore = options.minMatchScore ?? 0;
-  const scoreOk = nonConflict.filter((j) => ((j as { matchScore?: number }).matchScore ?? 0) >= minScore);
-  const droppedScore = nonConflict.length - scoreOk.length;
+  const scoreOk = located.filter((j) => ((j as { matchScore?: number }).matchScore ?? 0) >= minScore);
+  const droppedScore = located.length - scoreOk.length;
 
   if (scoreOk.length === 0) return null;
 
@@ -459,7 +528,7 @@ export function adaptPoolJobsForUser(
     fitRationale: t.fitRationale || '',
   }));
 
-  return { jobs, droppedStale, droppedConflict, droppedScore };
+  return { jobs, droppedStale, droppedConflict, droppedLocation, droppedScore };
 }
 
 /** Store / refresh a pool template from a raw scan (called on every fresh run). */

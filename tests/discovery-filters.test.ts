@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterConflictJobs, filterStaleJobs, excludedEmployers, adaptPoolJobsForUser, poolKeyOf } from '../server/discovery.js';
+import { filterConflictJobs, filterStaleJobs, excludedEmployers, adaptPoolJobsForUser, poolKeyOf, filterLocationJobs } from '../server/discovery.js';
 import type { CandidateProfile } from '../server/types.js';
 
 const mkProfile = (over: Partial<CandidateProfile> = {}): CandidateProfile => ({
@@ -102,6 +102,48 @@ describe('Enforce 1 — STRICT 45-DAY freshness filter', () => {
   it('keeps fresh and drops stale in a mixed batch', () => {
     const kept = filterStaleJobs(jobs([10, 100, 30, 90]));
     expect(kept.map((j) => j.postedDaysAgo)).toEqual([10, 30]);
+  });
+});
+
+describe('Enforce 3 — STRICT preferred-location filter', () => {
+  const mkJob = (location: string, remoteType = 'On-site') => ({ title: 'Job', location, remoteType });
+
+  it('blocks same-role on-site US postings for an India candidate', () => {
+    const { kept } = filterLocationJobs(
+      [mkJob('San Francisco, CA'), mkJob('New York, NY')],
+      'Bengaluru, India',
+    );
+    expect(kept).toHaveLength(0);
+  });
+
+  it('always keeps explicitly Remote postings', () => {
+    const { kept } = filterLocationJobs(
+      [mkJob('San Francisco, CA', 'Remote'), mkJob('Austin, TX', 'Remote')],
+      'Bengaluru, India',
+    );
+    expect(kept).toHaveLength(2);
+  });
+
+  it('keeps on-site postings in the candidate\'s own country (cross-state OK in US)', () => {
+    const { kept } = filterLocationJobs(
+      [mkJob('San Francisco, CA'), mkJob('Bengaluru, India'), mkJob('London, United Kingdom')],
+      'New York, NY',
+    );
+    expect(kept.map((j) => j.location)).toEqual(['San Francisco, CA']);
+  });
+
+  it('honours configured targetLocations even across countries', () => {
+    const { kept } = filterLocationJobs(
+      [mkJob('London, United Kingdom'), mkJob('Dubai, UAE')],
+      'Bengaluru, India',
+      ['London', 'Remote'],
+    );
+    expect(kept.map((j) => j.location)).toEqual(['London, United Kingdom']);
+  });
+
+  it('never over-filters when no location signal exists', () => {
+    const { kept } = filterLocationJobs([mkJob('Some City')], '', []);
+    expect(kept).toHaveLength(1);
   });
 });
 
