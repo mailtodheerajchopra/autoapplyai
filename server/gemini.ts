@@ -16,6 +16,58 @@ export const ai = new GoogleGenAI({
 const MODEL_NAME = "gemini-3.8-flash";
 
 /**
+ * Degradation chain for Gemini models. The primary (3.8) can be
+ * quota-exhausted or busy on the free tier; the secondary (3.5) is a
+ * cheaper, widely-available tier that produces the same structured JSON.
+ * Both have mock fallbacks downstream if both fail.
+ */
+const SECONDARY_MODEL = "gemini-3.5-flash";
+
+/** Models known-bad for this key during this process lifetime — skipped fast. */
+const unavailableModels = new Set<string>();
+
+/** Quota/busy signals that justify degrading to the next model in the chain. */
+function isDegradableModelError(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  if (status === 429 || status === 503 || status === 404) return true;
+  const msg = String((err as { message?: string })?.message ?? err);
+  return /quota|exhausted|unavailable|high demand|overloaded|rate limit/i.test(msg);
+}
+
+/**
+ * generateContent with an automatic model degradation chain.
+ * Call sites keep their existing argument shape ({model, contents, config});
+ * the model selection is overridden per attempt here.
+ */
+async function generateWithModelChain(params: {
+  model: string;
+  contents: any;
+  config?: any;
+}): Promise<any> {
+  const chain = Array.from(new Set([MODEL_NAME, SECONDARY_MODEL])).filter(
+    (m) => !unavailableModels.has(m)
+  );
+  let lastErr: unknown = new Error("No Gemini model available in chain");
+  for (let i = 0; i < chain.length; i++) {
+    const model = chain[i];
+    try {
+      return await ai.models.generateContent({ ...params, model });
+    } catch (err) {
+      lastErr = err;
+      if (isDegradableModelError(err) && i < chain.length - 1) {
+        console.warn(
+          `[gemini] ${model} unavailable (${(err as { status?: number })?.status ?? String((err as { message?: string })?.message).slice(0, 90)}) — degrading to ${chain[i + 1]}`
+        );
+        unavailableModels.add(model);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+/**
  * Fast helper to extract clean ASCII/UTF-8 text from raw PDF / binary buffer
  */
 export function extractTextFromPdfOrBinary(content: string, isBase64: boolean): string {
@@ -77,7 +129,7 @@ Provide a crisp professional headline and executive summary.`;
       contents = `Extract all candidate profile details, categorized skills, work history, and education from this resume text:\n\n${content}`;
     }
 
-    const response = await ai.models.generateContent({
+    const response = await generateWithModelChain({
       model: MODEL_NAME,
       contents,
       config: {
@@ -217,7 +269,7 @@ Generate 6 realistic, highly relevant job openings actively hiring in tech compa
 For each job, provide realistic job descriptions, exact required skills, portal type (specify 'workday' for enterprise company career sites, or 'greenhouse' / 'lever' / 'direct'), calculate an objective matchScore (0-100), identify matching skills, missing skills, postedDaysAgo (1-45), and provide a 1-sentence fit rationale.`;
 
   try {
-    const callPromise = ai.models.generateContent({
+    const callPromise = generateWithModelChain({
       model: MODEL_NAME,
       contents: prompt,
       config: {
@@ -367,7 +419,7 @@ Generate:
 2. A high-converting, tailored cover letter (2-3 concise paragraphs, highlighting matching skills, quantifiable achievements, and alignment with ${job.company}).`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await generateWithModelChain({
       model: MODEL_NAME,
       contents: prompt,
       config: {
@@ -433,7 +485,7 @@ Candidate Context: ${profile.fullName}, ${profile.yearsOfExperience} yrs exp, Sk
 Generate a revised, refined answer following the user's specific guidance, and explain the rationale.`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await generateWithModelChain({
       model: MODEL_NAME,
       contents: prompt,
       config: {
