@@ -80,21 +80,26 @@ class DatabaseService {
     }
   }
 
-  private async saveNow(): Promise<void> {
-    try {
-      await this.store.save(this.data);
-    } catch (err) {
-      console.error('[db] Failed to persist snapshot:', err);
-      // Free-tier networks blip (e.g. PostgREST 'fetch failed'). One quick
-      // retry keeps the durability promise without a background queue.
+  private async saveNow(): Promise<boolean> {
+    // Transient free-tier network blips ('fetch failed') must not silently
+    // drop a registration. Bounded retries: 3 attempts, 0.4s/1.2s/2.4s.
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await new Promise((r) => setTimeout(r, 1000));
         await this.store.save(this.data);
-        console.log('[db] Snapshot persisted on retry');
-      } catch (err2) {
-        console.error('[db] Snapshot persist failed after retry:', err2);
+        if (attempt > 0) console.log(`[db] Snapshot persisted on retry ${attempt}`);
+        return true;
+      } catch (err) {
+        console.error(`[db] Snapshot persist attempt ${attempt + 1}/3 failed:`, err instanceof Error ? err.message : err);
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * Math.pow(3, attempt)));
       }
     }
+    console.error('[db] Snapshot persist FAILED after 3 attempts — in-memory data at risk of loss');
+    return false;
+  }
+
+  /** Immediate, awaited persistence for auth-critical writes (registration). */
+  flush(): Promise<boolean> {
+    return this.saveNow();
   }
 
   private buildAdminUser(): User {
@@ -541,7 +546,10 @@ class DatabaseService {
   createUser(email: string, name: string, passwordPlain: string, role?: 'candidate' | 'admin'): User {
     const salt = crypto.randomBytes(16).toString('hex');
     const hash = crypto.pbkdf2Sync(passwordPlain, salt, 1000, 64, 'sha512').toString('hex');
-    const assignedRole: 'candidate' | 'admin' = role || (email.toLowerCase().includes('admin') ? 'admin' : 'candidate');
+    // Security: role NEVER inferred from the email (an email containing
+    // 'admin' no longer grants anything). Only an explicit admin grant or
+    // the seed creates admins.
+    const assignedRole: 'candidate' | 'admin' = role === 'admin' ? 'admin' : 'candidate';
     const newUser: User = {
       id: 'usr_' + crypto.randomUUID().slice(0, 8),
       email: email.trim().toLowerCase(),
@@ -599,6 +607,38 @@ class DatabaseService {
     if (!user) return false;
     user.role = role;
     this.persist();
+    return true;
+  }
+
+  /** Self-service password change: verifies the current password first. */
+  changeUserPassword(userId: string, currentPlain: string, newPlain: string): { ok: boolean; error?: string } {
+    if (!newPlain || newPlain.length < 6) return { ok: false, error: 'New password must be at least 6 characters' };
+    const user = this.data.users.find(u => u.id === userId);
+    if (!user) return { ok: false, error: 'User not found' };
+    if (!this.verifyPassword(user, currentPlain)) return { ok: false, error: 'Current password is incorrect' };
+    const salt = crypto.randomBytes(16).toString('hex');
+    user.salt = salt;
+    user.passwordHash = crypto.pbkdf2Sync(newPlain, salt, 1000, 64, 'sha512').toString('hex');
+    this.persist();
+    void this.saveNow();
+    return { ok: true };
+  }
+
+  /** Admin-only: remove a user and every record scoped to them. */
+  deleteUserAndData(userId: string): boolean {
+    const user = this.data.users.find(u => u.id === userId);
+    if (!user) return false;
+    this.data.users = this.data.users.filter(u => u.id !== userId);
+    this.data.profiles = this.data.profiles.filter(p => p.userId !== userId);
+    this.data.resumes = this.data.resumes.filter((r: { userId?: string }) => r.userId !== userId);
+    this.data.jobs = this.data.jobs.filter(j => j.userId !== userId);
+    this.data.applications = this.data.applications.filter(a => a.userId !== userId);
+    this.data.accounts = this.data.accounts.filter((a: { userId?: string }) => a.userId !== userId);
+    this.data.agentLogs = this.data.agentLogs.filter(l => l.userId !== userId);
+    this.data.discoveryJobs = this.data.discoveryJobs.filter(j => j.userId !== userId);
+    this.data.systemAuditLogs = this.data.systemAuditLogs.filter((l: { userId?: string }) => l.userId !== userId);
+    this.persist();
+    void this.saveNow();
     return true;
   }
 

@@ -44,7 +44,7 @@ apiRouter.post('/cron/discovery-sweep', async (req: Request, res: Response) => {
 // Authentication & Session Endpoints
 // ==========================================
 
-apiRouter.post('/auth/register', (req: Request, res: Response) => {
+apiRouter.post('/auth/register', async (req: Request, res: Response) => {
   // Security: self-registration always creates candidates. Admin grants
   // happen out-of-band, never via the register payload.
   const { email, name, password } = req.body as { email: string; name: string; password: string };
@@ -63,6 +63,13 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
   const token = generateToken(user.id);
   const profile = db.getProfile(user.id);
 
+  // Auth-critical write: flush immediately so this account survives instance
+  // eviction, and tell the client if the durable save failed.
+  const persisted = await db.flush();
+  if (!persisted) {
+    console.error(`[auth] registration for ${email} may not be durable!`);
+  }
+
   db.addAuditLog({
     userId: user.id,
     timestamp: new Date().toISOString(),
@@ -76,6 +83,7 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     user: { id: user.id, email: user.email, name: user.name, role: user.role },
     token,
     profile,
+    persisted,
   });
 });
 
@@ -152,8 +160,17 @@ apiRouter.post('/auth/demo-switch', demoGuard, (req: Request, res: Response) => 
   });
 });
 
-apiRouter.post('/auth/update-role', authMiddleware, (req: Request, res: Response) => {
-  // Admin-only: a candidate must never be able to promote themselves here.
+apiRouter.post('/auth/change-password', authMiddleware, (req: Request, res: Response) => {
+  const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword?: string };
+  if (!currentPassword || !newPassword) {
+    res.status(400).json({ error: 'Current and new password are required' });
+    return;
+  }
+  const result = db.changeUserPassword(req.user!.id, currentPassword, newPassword);
+  res.status(result.ok ? 200 : 400).json(result.ok ? { success: true } : { error: result.error });
+});
+
+apiRouter.post('/auth/update-role', authMiddleware, (req: Request, res: Response) => {  // Admin-only: a candidate must never be able to promote themselves here.
   if (req.user!.role !== 'admin') {
     res.status(403).json({ error: 'Only admins can change roles' });
     return;
@@ -213,6 +230,15 @@ const adminGuard = (req: Request, res: Response, next: () => void): void => {
 
 apiRouter.get('/admin/tenants', authMiddleware, adminGuard, (_req: Request, res: Response) => {
   res.json(db.getAdminTenantSummaries());
+});
+
+apiRouter.post('/admin/users/:userId/delete', authMiddleware, adminGuard, (req: Request, res: Response) => {
+  if (req.params.userId === 'usr_admin') {
+    res.status(400).json({ error: 'The seeded admin account cannot be deleted' });
+    return;
+  }
+  const deleted = db.deleteUserAndData(req.params.userId);
+  res.status(deleted ? 200 : 404).json({ deleted });
 });
 
 apiRouter.get('/admin/stats', authMiddleware, adminGuard, (_req: Request, res: Response) => {
