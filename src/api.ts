@@ -11,6 +11,21 @@ import {
 
 const TOKEN_KEY = 'autoapply_auth_token';
 
+// OAuth handoff: the Google callback redirects back with ?oauthToken=...;
+// consume it immediately, store the token, and scrub the URL clean.
+(function pickupOAuthToken() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const t = params.get('oauthToken');
+    if (t) {
+      localStorage.setItem(TOKEN_KEY, t);
+      params.delete('oauthToken');
+      const qs = params.toString();
+      window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
+    }
+  } catch { /* non-browser contexts — ignore */ }
+})();
+
 export function getStoredToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -66,8 +81,13 @@ export const api = {
     return res;
   },
 
-  async register(name: string, email: string, password: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {
-    const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/register', {
+  async getAuthProviders(): Promise<{ google: boolean }> {
+    const res = await fetch('/api/auth/google/config');
+    if (!res.ok) return { google: false };
+    return res.json();
+  },
+
+  async register(name: string, email: string, password: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {    const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({ name, email, password }),
     });

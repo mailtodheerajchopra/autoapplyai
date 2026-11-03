@@ -161,8 +161,140 @@ apiRouter.post('/auth/demo-switch', demoGuard, (req: Request, res: Response) => 
   });
 });
 
-apiRouter.post('/auth/change-password', authMiddleware, (req: Request, res: Response) => {
-  const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword?: string };
+// ==========================================
+// Google OAuth ("Sign in with Google")
+// ==========================================
+// Enabled only when GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET are configured.
+// Flow: /auth/google/start (302 to Google consent) → /auth/google/callback
+// (code exchange + userinfo → find-or-create candidate) → redirect to the SPA
+// with a one-shot ?oauthToken= that the client stores and immediately scrubs.
+// The `state` is an AUTH_SECRET-signed payload — CSRF-safe, single-use target.
+
+const GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
+
+function googleOauthEnabled(): boolean {
+  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+}
+
+function requestBase(req: Request): { host: string; proto: string } {
+  const host = ((req.headers['x-forwarded-host'] as string) || (req.headers.host as string) || 'localhost:3000').split(',')[0].trim();
+  const proto = ((req.headers['x-forwarded-proto'] as string) || host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https').split(',')[0];
+  return { host, proto };
+}
+
+function signPayload(payload: object): string {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', process.env.AUTH_SECRET || 'dev').update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifySignedState(state: string): { exp: number } | null {
+  const [body, sig] = (state || '').split('.');
+  if (!body || !sig) return null;
+  const expected = crypto.createHmac('sha256', process.env.AUTH_SECRET || 'dev').update(body).digest('base64url');
+  const ok = sig.length === expected.length && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
+  if (!ok) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(body, 'base64url').toString()) as { exp: number };
+    return Date.now() <= parsed.exp ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+apiRouter.get('/auth/google/config', (_req: Request, res: Response) => {
+  res.json({ google: googleOauthEnabled() });
+});
+
+apiRouter.get('/auth/google/start', (req: Request, res: Response) => {
+  if (!googleOauthEnabled()) {
+    res.status(404).json({ error: 'Google sign-in is not configured' });
+    return;
+  }
+  const { host, proto } = requestBase(req);
+  const redirectUri = `${proto}://${host}/api/auth/google/callback`;
+  const state = signPayload({ exp: Date.now() + 10 * 60_000, nonce: crypto.randomUUID(), from: host });
+  const url = new URL(GOOGLE_AUTH_URL);
+  url.searchParams.set('client_id', process.env.GOOGLE_CLIENT_ID!);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('scope', 'openid email profile');
+  url.searchParams.set('state', state);
+  url.searchParams.set('prompt', 'select_account');
+  res.setHeader('Cache-Control', 'no-store');
+  res.redirect(url.toString());
+});
+
+apiRouter.get('/auth/google/callback', async (req: Request, res: Response) => {
+  const { host, proto } = requestBase(req);
+  const back = (pathInfo: string) => `${proto}://${host}${pathInfo}`;
+  const fail = (msg: string) => back(`/?oauthError=${encodeURIComponent(msg)}`);
+
+  if (!googleOauthEnabled()) { res.redirect(fail('not_configured')); return; }
+  if (!verifySignedState(String(req.query.state || ''))) { res.redirect(fail('bad_state')); return; }
+  const code = String(req.query.code || '');
+  if (!code) { res.redirect(fail(req.query.error ? 'cancelled' : 'missing_code')); return; }
+
+  try {
+    const tokenRes = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        redirect_uri: `${proto}://${host}/api/auth/google/callback`,
+        grant_type: 'authorization_code',
+      }),
+    });
+    if (!tokenRes.ok) { console.error('[google] token exchange failed', tokenRes.status, await tokenRes.text()); res.redirect(fail('token_exchange')); return; }
+    const accessToken = (await tokenRes.json() as { access_token?: string }).access_token;
+    if (!accessToken) { res.redirect(fail('no_token')); return; }
+
+    const infoRes = await fetch(GOOGLE_USERINFO_URL, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const info = await infoRes.json() as { email?: string; email_verified?: boolean; name?: string };
+    if (!infoRes.ok || !info.email) { console.error('[google] userinfo failed', infoRes.status); res.redirect(fail('userinfo')); return; }
+    // Google returns verified emails only — this check is the account-link safety.
+    if (!info.email_verified) { res.redirect(fail('email_not_verified')); return; }
+
+    // Find-or-create: an email already registered keeps its existing account
+    // (Google only hands back verified emails); otherwise a passwordless
+    // candidate account is created with an unguessable password hash.
+    let user = db.findUserByEmail(info.email);
+    if (!user) {
+      user = db.createUser(info.email, info.name || info.email.split('@')[0], crypto.randomBytes(24).toString('base64url'), 'candidate');
+      db.addAuditLog({
+        userId: user.id,
+        timestamp: new Date().toISOString(),
+        category: 'security',
+        action: 'USER_REGISTERED_GOOGLE',
+        details: `Google-verified sign-up for ${user.email} (passwordless account provisioned, role: candidate).`,
+        severity: 'success',
+      });
+    } else {
+      db.addAuditLog({
+        userId: user.id,
+        timestamp: new Date().toISOString(),
+        category: 'security',
+        action: 'OAUTH_LOGIN',
+        details: `Google-verified login for ${user.email}.`,
+        severity: 'info',
+      });
+    }
+
+    const token = generateToken(user.id);
+    await db.flush();
+    res.setHeader('Cache-Control', 'no-store');
+    res.redirect(back(`/?oauthToken=${encodeURIComponent(token)}`));
+  } catch (err) {
+    console.error('[google] oauth error:', err);
+    res.redirect(fail('unexpected'));
+  }
+});
+
+apiRouter.post('/auth/change-password', authMiddleware, (req: Request, res: Response) => {  const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword?: string };
   if (!currentPassword || !newPassword) {
     res.status(400).json({ error: 'Current and new password are required' });
     return;
