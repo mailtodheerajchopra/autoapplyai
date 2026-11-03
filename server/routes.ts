@@ -9,6 +9,7 @@ import {
   generateWorkdayAutofillPackage,
   regenerateAnswerWithGuidance,
 } from './gemini.js';
+import { moderateResumeText } from './moderation.js';
 import {
   asHttpError, pollDiscovery, startDiscovery, sweepDiscoveryPool,
 } from './discovery.js';
@@ -290,13 +291,46 @@ apiRouter.post('/resumes/upload', authMiddleware, async (req: Request, res: Resp
     if (fileType === 'docx' && contentBase64) {
       const buffer = Buffer.from(contentBase64, 'base64');
       const docxResult = await mammoth.extractRawText({ buffer });
+      const moderation = moderateResumeText(docxResult.value);
+      if (moderation.verdict === 'reject') {
+        res.status(422).json({
+          error: 'CV rejected by the moderation gate',
+          reasons: moderation.reasons,
+        });
+        return;
+      }
       parsedData = await parseResumeWithGemini(docxResult.value, false);
+      if (moderation.verdict === 'flag') {
+        console.warn(`[moderation] flagged CV for user ${userId}:`, moderation.reasons);
+      }
     } else if (fileType === 'pdf' && contentBase64) {
       const extractedText = extractTextFromPdfOrBinary(contentBase64, true);
+      const moderation = moderateResumeText(extractedText);
+      if (moderation.verdict === 'reject') {
+        res.status(422).json({
+          error: 'CV rejected by the moderation gate',
+          reasons: moderation.reasons,
+        });
+        return;
+      }
       parsedData = await parseResumeWithGemini(contentBase64, true, extractedText);
+      if (moderation.verdict === 'flag') {
+        console.warn(`[moderation] flagged CV for user ${userId}:`, moderation.reasons);
+      }
     } else {
       const textToParse = rawText || (contentBase64 ? Buffer.from(contentBase64, 'base64').toString('utf-8') : '');
+      const moderation = moderateResumeText(textToParse);
+      if (moderation.verdict === 'reject') {
+        res.status(422).json({
+          error: 'CV rejected by the moderation gate',
+          reasons: moderation.reasons,
+        });
+        return;
+      }
       parsedData = await parseResumeWithGemini(textToParse || 'Sample Software Resume', false);
+      if (moderation.verdict === 'flag') {
+        console.warn(`[moderation] flagged CV for user ${userId}:`, moderation.reasons);
+      }
     }
 
     // Auto-detect current/last employer from work experience
