@@ -185,6 +185,28 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
       {/* CV Gate: block discovery until the candidate uploads and parses a resume */}
       {resumes.length === 0 && (
         <div className="p-8 rounded-2xl bg-slate-900 border border-indigo-900/60 text-center">
+          {/* Onboarding stepper: exactly how a new user explores the site */}
+          <div className="flex items-center justify-center gap-2 sm:gap-3 mb-6 text-[11px] font-medium">
+            {[1, 2, 3].map((n) => {
+              const state = n === 1 ? 'done'
+                : n === 2 ? 'active'
+                : 'todo';
+              return (
+                <React.Fragment key={n}>
+                  <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border ${
+                    state === 'done' ? 'bg-emerald-950/60 border-emerald-800 text-emerald-300'
+                    : state === 'active' ? 'bg-indigo-950/60 border-indigo-700 text-indigo-300'
+                    : 'bg-slate-950 border-slate-800 text-slate-500'
+                  }`}>
+                    <span className="w-4 h-4 rounded-full bg-slate-800 flex items-center justify-center text-[9px]">{state === 'done' ? '✓' : n}</span>
+                    <span>{n === 1 ? 'Create account' : n === 2 ? 'Upload CV' : 'Run your first search'}</span>
+                  </div>
+                  {n < 3 && <span className="text-slate-600">→</span>}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
           <div className="w-14 h-14 mx-auto rounded-xl bg-indigo-950/60 border border-indigo-800 flex items-center justify-center">
             <FileUp className="w-7 h-7 text-indigo-300" />
           </div>
@@ -192,6 +214,11 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
           <p className="mt-2 text-sm text-slate-300 max-w-lg mx-auto">
             The agent matches jobs from the skills, experience and employers in your CV — it also powers the conflict shield
             and the preferred-location rule. No search runs until your CV is parsed.
+          </p>
+          <p className="mt-3 text-xs text-slate-400 max-w-xl mx-auto leading-relaxed">
+            How it works after that: the agent scans matching openings → filters them for you (45-day freshness, your
+            current employer blocked, your region only) → every job card shows the fit score and why → you pick one and the
+            Workday form is auto-prepared for your final review before anything is submitted.
           </p>
           <input
             ref={gateInputRef}
