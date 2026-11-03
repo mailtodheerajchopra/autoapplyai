@@ -66,10 +66,10 @@ export const api = {
     return res;
   },
 
-  async register(name: string, email: string, password: string, role?: 'candidate' | 'admin'): Promise<{ user: User; token: string; profile: CandidateProfile }> {
+  async register(name: string, email: string, password: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {
     const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ name, email, password, role }),
+      body: JSON.stringify({ name, email, password }),
     });
     setStoredToken(res.token);
     return res;

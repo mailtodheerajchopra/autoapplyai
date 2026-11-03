@@ -9,13 +9,16 @@ interface TopNavProps {
   pendingReviewsCount: number;
 }
 
+// Sandbox persona UI is dev-only; the demo-switch endpoint 404s in production.
+const DEMO_UI_ENABLED = import.meta.env.DEV;
+
 export const TopNav: React.FC<TopNavProps> = ({
   activeTab,
   setActiveTab,
   onOpenAuth,
   pendingReviewsCount,
 }) => {
-  const { user, demoPersonas, switchUser, logout, activePortal, setActivePortal, toggleUserRole } = useAuth();
+  const { user, demoPersonas, switchUser, logout, activePortal, setActivePortal } = useAuth();
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [showSandboxPersonas, setShowSandboxPersonas] = useState(false);
 
@@ -92,17 +95,18 @@ export const TopNav: React.FC<TopNavProps> = ({
 
           {/* Zone 3: Portal Switcher & Multi-User Session Switcher */}
           <div className="flex items-center gap-3 shrink-0">
-            {/* Direct Portal Toggle Button */}
-            {activePortal === 'candidate' ? (
-              <button
-                onClick={() => setActivePortal('admin')}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-xs text-indigo-300 border border-indigo-900/60 transition-colors"
-                title="Switch to Admin Console to inspect audit logs, 45d telemetry, and tenant manager"
-              >
-                <Shield className="w-3.5 h-3.5 text-indigo-400" />
-                <span className="font-semibold">Admin Console</span>
-              </button>
-            ) : (
+            {/* Direct Portal Toggle Button — admin portal visibility requires admin role */}
+            {user?.role === 'admin' ? (
+              activePortal === 'candidate' ? (
+                <button
+                  onClick={() => setActivePortal('admin')}
+                  className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-xs text-indigo-300 border border-indigo-900/60 transition-colors"
+                  title="Switch to Admin Console to inspect audit logs, 45d telemetry, and tenant manager"
+                >
+                  <Shield className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="font-semibold">Admin Console</span>
+                </button>
+              ) : (
               <button
                 onClick={() => {
                   setActivePortal('candidate');
@@ -114,7 +118,8 @@ export const TopNav: React.FC<TopNavProps> = ({
                 <Briefcase className="w-3.5 h-3.5 text-emerald-400" />
                 <span className="font-semibold">Candidate View</span>
               </button>
-            )}
+              ))
+              : null}
 
             {user ? (
               <div className="relative">
@@ -158,74 +163,58 @@ export const TopNav: React.FC<TopNavProps> = ({
                       </div>
                     </div>
 
-                    {/* Quick Role Toggle */}
-                    <div className="px-2 py-1 mb-2">
-                      <button
-                        onClick={() => {
-                          const newRole = user.role === 'admin' ? 'candidate' : 'admin';
-                          toggleUserRole(newRole);
-                          setUserDropdownOpen(false);
-                        }}
-                        className="w-full px-2.5 py-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-800 text-[11px] text-slate-300 hover:text-white flex items-center justify-between transition-colors border border-slate-700/60"
-                      >
-                        <span>Change Role:</span>
-                        <span className="font-semibold text-indigo-300">
-                          Switch to {user.role === 'admin' ? 'Candidate' : 'Admin'}
-                        </span>
-                      </button>
-                    </div>
+                    {(user.role === 'admin' || DEMO_UI_ENABLED) && (
+                      <div className="pt-1 border-t border-slate-800">
+                        <button
+                          onClick={() => setShowSandboxPersonas(!showSandboxPersonas)}
+                          className="w-full px-2.5 py-1 text-[10px] text-slate-400 hover:text-slate-200 flex items-center justify-between transition-colors"
+                        >
+                          <span className="font-semibold uppercase tracking-wider">
+                            Test Personas (Sandbox Only)
+                          </span>
+                          <ChevronDown className={`w-3 h-3 transition-transform ${showSandboxPersonas ? 'rotate-180' : ''}`} />
+                        </button>
 
-                    {/* Sandbox Demo Personas Toggle */}
-                    <div className="pt-1 border-t border-slate-800">
-                      <button
-                        onClick={() => setShowSandboxPersonas(!showSandboxPersonas)}
-                        className="w-full px-2.5 py-1 text-[10px] text-slate-400 hover:text-slate-200 flex items-center justify-between transition-colors"
-                      >
-                        <span className="font-semibold uppercase tracking-wider">
-                          Test Personas (Sandbox Only)
-                        </span>
-                        <ChevronDown className={`w-3 h-3 transition-transform ${showSandboxPersonas ? 'rotate-180' : ''}`} />
-                      </button>
-
-                      {showSandboxPersonas && (
-                        <div className="space-y-1 mt-1 max-h-40 overflow-y-auto pr-1">
-                          <p className="px-2 py-0.5 text-[9px] text-slate-400">
-                            Registered accounts are private and hidden from other users.
-                          </p>
-                          {demoPersonas.map((u) => (
-                            <button
-                              key={u.id}
-                              onClick={() => {
-                                switchUser(u.id);
-                                setUserDropdownOpen(false);
-                              }}
-                              className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
-                                u.id === user.id
-                                  ? 'bg-indigo-950/60 text-indigo-300 border border-indigo-800/60 font-medium'
-                                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                              }`}
-                            >
-                              <div className="truncate pr-2">
-                                <p className="font-medium truncate flex items-center gap-1.5 text-[11px]">
-                                  <span>{u.name}</span>
-                                  <span className={`text-[8px] px-1 rounded uppercase ${
-                                    u.role === 'admin' ? 'bg-indigo-950 text-indigo-400' : 'bg-slate-800 text-slate-400'
-                                  }`}>
-                                    {u.role}
-                                  </span>
-                                </p>
-                                <p className="text-[9px] text-slate-400 truncate font-mono">{u.email}</p>
-                              </div>
-                              {u.id === user.id ? (
-                                <UserCheck className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                              ) : (
-                                <RefreshCw className="w-3 h-3 text-slate-400 shrink-0" />
-                              )}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                        {showSandboxPersonas && (
+                          <div className="space-y-1 mt-1 max-h-40 overflow-y-auto pr-1">
+                            <p className="px-2 py-0.5 text-[9px] text-slate-400">
+                              Registered accounts are private and hidden from other users.
+                            </p>
+                            {demoPersonas.map((u) => (
+                              <button
+                                key={u.id}
+                                onClick={() => {
+                                  switchUser(u.id);
+                                  setUserDropdownOpen(false);
+                                }}
+                                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-left transition-colors ${
+                                  u.id === user.id
+                                    ? 'bg-indigo-950/60 text-indigo-300 border border-indigo-800/60 font-medium'
+                                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                                }`}
+                              >
+                                <div className="truncate pr-2">
+                                  <p className="font-medium truncate flex items-center gap-1.5 text-[11px]">
+                                    <span>{u.name}</span>
+                                    <span className={`text-[8px] px-1 rounded uppercase ${
+                                      u.role === 'admin' ? 'bg-indigo-950 text-indigo-400' : 'bg-slate-800 text-slate-400'
+                                    }`}>
+                                      {u.role}
+                                    </span>
+                                  </p>
+                                  <p className="text-[9px] text-slate-400 truncate font-mono">{u.email}</p>
+                                </div>
+                                {u.id === user.id ? (
+                                  <UserCheck className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                                ) : (
+                                  <RefreshCw className="w-3 h-3 text-slate-400 shrink-0" />
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between px-2">
                       <button

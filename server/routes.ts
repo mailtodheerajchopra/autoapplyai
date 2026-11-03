@@ -19,7 +19,9 @@ export const apiRouter = Router();
 // ==========================================
 
 apiRouter.post('/auth/register', (req: Request, res: Response) => {
-  const { email, name, password, role } = req.body;
+  // Security: self-registration always creates candidates. Admin grants
+  // happen out-of-band, never via the register payload.
+  const { email, name, password } = req.body as { email: string; name: string; password: string };
   if (!email || !name || !password) {
     res.status(400).json({ error: 'Name, email, and password are required' });
     return;
@@ -31,7 +33,7 @@ apiRouter.post('/auth/register', (req: Request, res: Response) => {
     return;
   }
 
-  const user = db.createUser(email, name, password, role);
+  const user = db.createUser(email, name, password, 'candidate');
   const token = generateToken(user.id);
   const profile = db.getProfile(user.id);
 
@@ -83,7 +85,21 @@ apiRouter.post('/auth/login', (req: Request, res: Response) => {
   });
 });
 
-apiRouter.post('/auth/demo-switch', (req: Request, res: Response) => {
+// ─── Demo-only endpoints: disabled in production (404) ───────────────────────
+// demo-switch hands a valid token for ANY user id, including usr_admin —
+// that is a demo backdoor that must never answer on a real deployment.
+const DEMO_AUTH_ENABLED =
+  process.env.ENABLE_DEMO_AUTH === 'true' || process.env.NODE_ENV === 'development';
+
+function demoGuard(_req: Request, res: Response, next: () => void): void {
+  if (!DEMO_AUTH_ENABLED) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  next();
+}
+
+apiRouter.post('/auth/demo-switch', demoGuard, (req: Request, res: Response) => {
   const { userId } = req.body;
   const user = db.findUserById(userId);
   if (!user) {
@@ -111,6 +127,11 @@ apiRouter.post('/auth/demo-switch', (req: Request, res: Response) => {
 });
 
 apiRouter.post('/auth/update-role', authMiddleware, (req: Request, res: Response) => {
+  // Admin-only: a candidate must never be able to promote themselves here.
+  if (req.user!.role !== 'admin') {
+    res.status(403).json({ error: 'Only admins can change roles' });
+    return;
+  }
   const { role } = req.body;
   if (role !== 'candidate' && role !== 'admin') {
     res.status(400).json({ error: 'Role must be candidate or admin' });
@@ -131,7 +152,7 @@ apiRouter.post('/auth/update-role', authMiddleware, (req: Request, res: Response
   res.json({ success: true, role });
 });
 
-apiRouter.get('/auth/demo-personas', (_req: Request, res: Response) => {
+apiRouter.get('/auth/demo-personas', demoGuard, (_req: Request, res: Response) => {
   res.json(db.getDemoPersonas());
 });
 
@@ -139,7 +160,7 @@ apiRouter.get('/auth/users', authMiddleware, (req: Request, res: Response) => {
   if (req.user?.role === 'admin') {
     res.json(db.getAllUsersPublic());
   } else {
-    res.json(db.getDemoPersonas());
+    res.status(403).json({ error: 'Forbidden' });
   }
 });
 
@@ -153,14 +174,22 @@ apiRouter.get('/auth/me', authMiddleware, (req: Request, res: Response) => {
 });
 
 // ==========================================
-// Admin Supervision Endpoints
+// Admin Supervision Endpoints (admin role required)
 // ==========================================
 
-apiRouter.get('/admin/tenants', authMiddleware, (_req: Request, res: Response) => {
+const adminGuard = (req: Request, res: Response, next: () => void): void => {
+  if (req.user?.role !== 'admin') {
+    res.status(403).json({ error: 'Admin access required' });
+    return;
+  }
+  next();
+};
+
+apiRouter.get('/admin/tenants', authMiddleware, adminGuard, (_req: Request, res: Response) => {
   res.json(db.getAdminTenantSummaries());
 });
 
-apiRouter.get('/admin/stats', authMiddleware, (_req: Request, res: Response) => {
+apiRouter.get('/admin/stats', authMiddleware, adminGuard, (_req: Request, res: Response) => {
   res.json(db.getAdminPlatformStats());
 });
 

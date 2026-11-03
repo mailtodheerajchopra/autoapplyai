@@ -30,7 +30,7 @@ interface AdminConsoleViewProps {
 }
 
 export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTenant }) => {
-  const { user, toggleUserRole } = useAuth();
+  const { user } = useAuth();
   const [activeAdminSubTab, setActiveAdminSubTab] = useState<'tenants' | 'audit' | 'safeguards' | 'relevance' | 'deployment'>('tenants');
   const [tenants, setTenants] = useState<AdminTenantSummary[]>([]);
   const [stats, setStats] = useState<AdminPlatformStats | null>(null);

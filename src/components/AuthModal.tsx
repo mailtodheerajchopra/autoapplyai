@@ -13,7 +13,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'candidate' | 'admin'>('candidate');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -26,7 +25,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     try {
       if (isRegister) {
         if (!name.trim()) throw new Error('Please enter your full name');
-        await register(name, email, password, role);
+        await register(name, email, password);
       } else {
         await login(email, password);
       }
@@ -115,38 +114,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             </div>
           </div>
 
-          {isRegister && (
-            <div className="space-y-1">
-              <label className="text-slate-300 font-medium">Account Type</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setRole('candidate')}
-                  className={`p-2 rounded-lg border text-left transition-colors ${
-                    role === 'candidate'
-                      ? 'bg-emerald-950/60 border-emerald-700 text-emerald-300'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <div className="font-semibold text-xs">Candidate</div>
-                  <div className="text-[10px] text-slate-400">Discover jobs & apply</div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRole('admin')}
-                  className={`p-2 rounded-lg border text-left transition-colors ${
-                    role === 'admin'
-                      ? 'bg-indigo-950/60 border-indigo-700 text-indigo-300'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  <div className="font-semibold text-xs">Admin</div>
-                  <div className="text-[10px] text-slate-400">Audit logs & control</div>
-                </button>
-              </div>
-            </div>
-          )}
-
           <button
             type="submit"
             disabled={submitting}
@@ -177,7 +144,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           </button>
         </div>
 
-        {/* Quick Demo Switcher Section */}
+        {/* Quick Demo Switcher Section — dev-only (demo endpoints 404 in prod) */}
+        {demoPersonas.length > 0 && (
         <div className="pt-3 border-t border-slate-800 space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
@@ -209,6 +177,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             ))}
           </div>
         </div>
+        )}
       </div>
     </div>
   );

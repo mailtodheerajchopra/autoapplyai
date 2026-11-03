@@ -11,7 +11,7 @@ interface AuthContextType {
   availableUsers: { id: string; email: string; name: string; role: 'candidate' | 'admin' }[];
   demoPersonas: { id: string; email: string; name: string; role: 'candidate' | 'admin' }[];
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string, role?: 'candidate' | 'admin') => Promise<void>;
+  register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
   switchUser: (userId: string) => Promise<void>;
   toggleUserRole: (newRole: 'candidate' | 'admin') => Promise<void>;
@@ -83,17 +83,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const register = async (name: string, email: string, password: string, role?: 'candidate' | 'admin') => {
+  const register = async (name: string, email: string, password: string) => {
     setIsLoading(true);
     try {
-      const res = await api.register(name, email, password, role);
+      const res = await api.register(name, email, password);
       setUser(res.user);
       setProfile(res.profile);
-      if (res.user.role === 'admin') {
-        setActivePortal('admin');
-      } else {
-        setActivePortal('candidate');
-      }
+      setActivePortal('candidate');
     } finally {
       setIsLoading(false);
     }

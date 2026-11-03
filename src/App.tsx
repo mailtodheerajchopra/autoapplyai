@@ -97,7 +97,7 @@ function MainDashboard() {
           </div>
         )}
 
-        {activePortal === 'admin' ? (
+        {activePortal === 'admin' && user?.role === 'admin' ? (
           <AdminConsoleView onSwitchToTenant={(tenantId) => switchUser(tenantId)} />
         ) : (
           <>
