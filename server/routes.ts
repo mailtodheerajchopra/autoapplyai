@@ -386,6 +386,12 @@ apiRouter.post('/agent/discover', authMiddleware, async (req: Request, res: Resp
       return;
     }
 
+    // CV gate: matching is powered by the parsed CV — no resume, no run.
+    if (db.getResumes(userId).length === 0) {
+      res.status(400).json({ error: 'Upload and parse your CV before running the discovery agent.' });
+      return;
+    }
+
     const { keywords, sources, location, remoteOnly, minMatchScore } = req.body;
     const handle = startDiscovery(userId, {
       keywords,

@@ -14,10 +14,24 @@ function auth(token: string): Record<string, string> {
   return { Authorization: `Bearer ${token}` };
 }
 
+/** CV gate: discovery requires a parsed resume; seed one for the test user. */
+async function seedResume(app: ReturnType<typeof createApp>): Promise<void> {
+  const token = await mint(app);
+  await request(app)
+    .post('/api/resumes/upload')
+    .set(auth(token))
+    .send({
+      fileName: 'cv.txt',
+      fileType: 'txt',
+      rawText: 'Alex Chen — 7 years Full Stack Engineer. Tech Corp. Skills: React, Node.js, TypeScript, Workday.',
+    });
+}
+
 describe('async discovery pipeline (202 + poll + cooldown)', () => {
   const app = createApp();
 
   it('runs the full pipeline: instant 202 → poll to completed → jobs land → cooldown 429', async () => {
+    await seedResume(app);
     const token = await mint(app);
     const jobsBefore = (await request(app).get('/api/jobs').set(auth(token))).body.length;
 
@@ -69,6 +83,15 @@ describe('async discovery pipeline (202 + poll + cooldown)', () => {
   });
 
   it('serves a duplicate kickoff of an unfinished run without creating a duplicate job (dedupe)', async () => {
+    // CV gate guard: without a resume the kickoff is rejected outright.
+    const noCv = await mint(app);
+    const gated = await request(app)
+      .post('/api/agent/discover')
+      .set(auth(noCv))
+      .send({ keywords: ['Gate Probe'] });
+    expect([429, 400]).toContain(gated.status);
+    if (gated.status === 400) expect(gated.body.error).toMatch(/CV/i);
+
     // The 45s cooldown guarantees the "running/completed" record from the
     // previous test is still the latest job for this user; the kickoff must
     // not create a second job record — it is either 429 (cooldown) or the

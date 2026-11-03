@@ -39,6 +39,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const me = await api.getMe();
           setUser(me.user);
           setProfile(me.profile);
+          // Portal follows role on restore — admins land in the Admin Console.
+          setActivePortal(me.user.role === 'admin' ? 'admin' : 'candidate');
         } catch {
           // If token invalid, auto-login demo user Alex Chen for frictionless testing
           await autoLoginDemo();

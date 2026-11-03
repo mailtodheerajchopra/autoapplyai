@@ -108,6 +108,8 @@ function MainDashboard() {
                 onRefreshJobs={loadUserData}
                 onOpenReview={handleOpenReview}
                 onOpenWorkdayTab={() => setActiveTab('workday')}
+                resumes={resumes}
+                onRefreshResumes={loadUserData}
               />
             )}
 

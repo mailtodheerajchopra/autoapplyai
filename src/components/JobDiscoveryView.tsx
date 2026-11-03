@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { JobPosting, AgentRunLog, WorkdayApplication } from '../types';
+import React, { useState, useRef } from 'react';
+import { JobPosting, AgentRunLog, WorkdayApplication, ResumeDocument } from '../types';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -14,6 +14,7 @@ import {
   MapPin,
   DollarSign,
   Briefcase,
+  FileUp,
 } from 'lucide-react';
 
 interface JobDiscoveryViewProps {
@@ -22,6 +23,8 @@ interface JobDiscoveryViewProps {
   onRefreshJobs: () => Promise<void>;
   onOpenReview: (app: WorkdayApplication) => void;
   onOpenWorkdayTab: () => void;
+  resumes: ResumeDocument[];
+  onRefreshResumes: () => Promise<void>;
 }
 
 export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
@@ -30,6 +33,8 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
   onRefreshJobs,
   onOpenReview,
   onOpenWorkdayTab,
+  resumes,
+  onRefreshResumes,
 }) => {
   const { profile } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
@@ -60,6 +65,46 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
       }
     } else {
       setSelectedSources([...selectedSources, source]);
+    }
+  };
+
+  // ─── CV Gate: a parsed resume is required before the agent may run ─────────
+  const gateInputRef = useRef<HTMLInputElement>(null);
+  const [isGateUploading, setIsGateUploading] = useState(false);
+  const [gateStatus, setGateStatus] = useState<string | null>(null);
+  const [gateError, setGateError] = useState<string | null>(null);
+
+  const handleGateUpload = async (file: File) => {
+    setIsGateUploading(true);
+    setGateError(null);
+    setGateStatus('Reading CV…');
+    const type = file.name.toLowerCase().endsWith('.pdf') ? 'pdf'
+      : file.name.toLowerCase().endsWith('.docx') ? 'docx'
+      : file.name.toLowerCase().endsWith('.md') ? 'md' : 'txt';
+    try {
+      const finish = async (payload: { fileName: string; fileType: 'pdf' | 'docx' | 'md' | 'txt'; contentBase64?: string; rawText?: string }) => {
+        setGateStatus('AI is parsing skills, experience and employers — up to 30s…');
+        await api.uploadResume(payload);
+        await onRefreshResumes();
+        await onRefreshJobs();
+        setGateStatus('CV parsed — discovery engine activating…');
+      };
+      if (type === 'pdf' || type === 'docx') {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve((reader.result as string).split(',')[1]);
+          reader.onerror = () => reject(new Error('Could not read file'));
+          reader.readAsDataURL(file);
+        });
+        await finish({ fileName: file.name, fileType: type as 'pdf' | 'docx', contentBase64: base64 });
+      } else {
+        await finish({ fileName: file.name, fileType: type as 'md' | 'txt', rawText: await file.text() });
+      }
+    } catch (err) {
+      setGateStatus(null);
+      setGateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsGateUploading(false);
     }
   };
 
@@ -137,6 +182,40 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* CV Gate: block discovery until the candidate uploads and parses a resume */}
+      {resumes.length === 0 && (
+        <div className="p-8 rounded-2xl bg-slate-900 border border-indigo-900/60 text-center">
+          <div className="w-14 h-14 mx-auto rounded-xl bg-indigo-950/60 border border-indigo-800 flex items-center justify-center">
+            <FileUp className="w-7 h-7 text-indigo-300" />
+          </div>
+          <h2 className="mt-4 text-xl font-bold text-white">Upload your CV to activate the discovery engine</h2>
+          <p className="mt-2 text-sm text-slate-300 max-w-lg mx-auto">
+            The agent matches jobs from the skills, experience and employers in your CV — it also powers the conflict shield
+            and the preferred-location rule. No search runs until your CV is parsed.
+          </p>
+          <input
+            ref={gateInputRef}
+            type="file"
+            accept=".pdf,.docx,.md,.txt"
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleGateUpload(f); e.target.value = ''; }}
+          />
+          <button
+            onClick={() => gateInputRef.current?.click()}
+            disabled={isGateUploading}
+            className="mt-5 inline-flex items-center gap-2 h-10 px-6 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-semibold text-white shadow-lg shadow-indigo-950 transition-colors"
+          >
+            {isGateUploading ? (
+              <><div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> {gateStatus || 'Working…'}</>
+            ) : (
+              <><FileUp className="w-4 h-4" /> Choose CV (PDF · DOCX · MD · TXT)</>
+            )}
+          </button>
+          {gateStatus && !isGateUploading && <p className="mt-3 text-xs text-emerald-400">{gateStatus}</p>}
+          {gateError && <p className="mt-3 text-xs text-rose-400">{gateError}</p>}
+        </div>
+      )}
+
       {/* Hero & Autonomous Search Engine Controller */}
       <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 relative overflow-hidden">
         <div className="relative z-10 max-w-3xl space-y-4">

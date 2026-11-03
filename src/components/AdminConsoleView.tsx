@@ -44,13 +44,16 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
     setIsLoading(true);
     try {
       const [tenantsData, statsData, logsData] = await Promise.all([
-        api.getAdminTenants().catch(() => []),
-        api.getAdminStats().catch(() => null),
-        api.getAuditLogs().catch(() => []),
+        api.getAdminTenants().catch((e) => { console.error('tenants load failed:', e); return []; }),
+        api.getAdminStats().catch((e) => { console.error('stats load failed:', e); return null; }),
+        api.getAuditLogs().catch((e) => { console.error('audit load failed:', e); return []; }),
       ]);
       setTenants(tenantsData);
       setStats(statsData);
       setAuditLogs(logsData);
+      if (!statsData) setActionSuccess('Failed to load platform stats — retry shortly.');
+      else if (tenantsData.length === 0) setActionSuccess('No candidates registered yet.');
+      else setActionSuccess(`Loaded ${tenantsData.length} registered accounts.`);
     } catch (err) {
       console.error("Admin data load error:", err);
     } finally {
