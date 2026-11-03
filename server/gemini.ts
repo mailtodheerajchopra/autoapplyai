@@ -50,10 +50,29 @@ async function generateWithModelChain(params: {
   let lastErr: unknown = new Error("No Gemini model available in chain");
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i];
+    // Per-attempt budget: the primary free-tier flagship is often busy/quota'd
+    // and can hang ~100s behind the SDK's internal retries — abandon it fast
+    // and hand the wait to the next tier instead. The secondary gets the
+    // patient leash because that is where work actually happens today.
+    const attemptBudgetMs = model === MODEL_NAME ? 12_000 : 30_000;
+    const attempt = ai.models.generateContent({ ...params, model });
+    const attemptTimer = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error(`model attempt timeout (${attemptBudgetMs / 1000}s): ${model}`)),
+        attemptBudgetMs
+      )
+    );
     try {
-      return await ai.models.generateContent({ ...params, model });
+      return (await Promise.race([attempt, attemptTimer])) as any;
     } catch (err) {
       lastErr = err;
+      const isAttemptTimeout = /^model attempt timeout/.test(
+        String((err as { message?: string })?.message)
+      );
+      if (isAttemptTimeout && i < chain.length - 1) {
+        console.warn(`[gemini] ${model} exceeded its ${attemptBudgetMs / 1000}s attempt budget — degrading to ${chain[i + 1]}`);
+        continue;
+      }
       if (isDegradableModelError(err) && i < chain.length - 1) {
         console.warn(
           `[gemini] ${model} unavailable (${(err as { status?: number })?.status ?? String((err as { message?: string })?.message).slice(0, 90)}) — degrading to ${chain[i + 1]}`
@@ -342,13 +361,9 @@ For each job, provide realistic job descriptions, exact required skills, portal 
       },
     });
 
-    // Free-tier models can take 10-20s to produce the full structured JSON.
-    // Background execution + poll-based UX make 30s acceptable end to end.
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Job discovery timeout (30s limit)")), 30000)
-    );
-
-    const response = await Promise.race([callPromise, timeoutPromise]);
+    // The model chain owns the timeout budget now: primary attempt 12s,
+    // secondary 30s — bounded well under the serverless maxDuration.
+    const response = await callPromise;
 
     const parsed = JSON.parse(response.text || "[]");
     return parsed.map((item: any) => {

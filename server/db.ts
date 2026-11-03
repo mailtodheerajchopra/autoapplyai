@@ -73,6 +73,15 @@ class DatabaseService {
       await this.store.save(this.data);
     } catch (err) {
       console.error('[db] Failed to persist snapshot:', err);
+      // Free-tier networks blip (e.g. PostgREST 'fetch failed'). One quick
+      // retry keeps the durability promise without a background queue.
+      try {
+        await new Promise((r) => setTimeout(r, 1000));
+        await this.store.save(this.data);
+        console.log('[db] Snapshot persisted on retry');
+      } catch (err2) {
+        console.error('[db] Snapshot persist failed after retry:', err2);
+      }
     }
   }
 
