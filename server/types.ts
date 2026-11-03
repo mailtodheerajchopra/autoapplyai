@@ -288,6 +288,39 @@ export interface DiscoveryJobResult {
   conflictJobsBlocked: number;
 }
 
+/**
+ * Shared DiscoveryPool: ONE market scan per (skills-fingerprint + search
+ * filters), reused across users. The per-user 45d/conflict/brand filters are
+ * applied at serve time, never stored. Amortizes the free-tier Gemini quota:
+ * N users with the same profile cost ONE agent run.
+ */
+export interface DiscoveryPoolEntry {
+  poolKey: string;
+  keywords?: string[];
+  sources?: string[];
+  location?: string;
+  remoteOnly?: boolean;
+  /** Skill context captured from the originating profile (drives the Gemini prompt). */
+  skillContext: PoolSkillContext;
+  /** Template postings as fetched — pre-user-filter (userId set to 'pool'). */
+  jobs: Array<Omit<JobPosting, 'id' | 'userId'> & { id?: string }>;
+  fetchedAt: string;
+  /** Recency signal for the cron sweeper (top-N active fingerprints refresh first). */
+  lastRequestedAt: string;
+  requestCount: number;
+}
+
+export interface PoolSkillContext {
+  primarySkills: string[];
+  skillItems: string[];
+  targetRoles: string[];
+  yearsOfExperience: number;
+  currentEmployer?: string;
+  excludedEmployers?: string[];
+  location?: string;
+  preferredWorkType?: string;
+}
+
 export interface DiscoveryRunHandle {
   jobId: string;
   status: DiscoveryJob['status'];

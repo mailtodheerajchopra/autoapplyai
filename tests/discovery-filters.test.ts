@@ -1,5 +1,84 @@
 import { describe, it, expect } from 'vitest';
-import { filterConflictJobs, filterStaleJobs, excludedEmployers } from '../server/discovery.js';
+import { filterConflictJobs, filterStaleJobs, excludedEmployers, adaptPoolJobsForUser, poolKeyOf } from '../server/discovery.js';
+import type { CandidateProfile } from '../server/types.js';
+
+const mkProfile = (over: Partial<CandidateProfile> = {}): CandidateProfile => ({
+  id: 'p1', userId: 'u1', fullName: 'T', email: '', phone: '',
+  location: 'US', headline: '', summary: '', linkedinUrl: '', githubUrl: '', portfolioUrl: '',
+  currentEmployer: '', excludedEmployers: [], skills: [], primarySkills: [],
+  workdayPreferences: {} as CandidateProfile['workdayPreferences'],
+  targetRoles: [], targetLocations: [], yearsOfExperience: 5, updatedAt: new Date().toISOString(),
+  ...over,
+});
+
+describe('DiscoveryPool — user-side serve filters', () => {
+  const entry = (jobs: any[], fetchedAt: string) => ({ jobs, fetchedAt });
+
+  it('ages postings by pool age and drops those crossing 45d', () => {
+    const fetchedAt = new Date(Date.now() - 2 * 86_400_000).toISOString(); // 2 days ago
+    const adapted = adaptPoolJobsForUser(
+      entry([
+        { company: 'Fresh Co', matchScore: 90, postedDaysAgo: 10 },
+        { company: 'Borderline', matchScore: 80, postedDaysAgo: 44 },
+      ], fetchedAt),
+      mkProfile(),
+      {},
+    );
+    expect(adapted).not.toBeNull();
+    expect(adapted!.jobs.map((j) => j.company)).toEqual(['Fresh Co']); // 44+2=46 → stale
+    expect(adapted!.droppedStale).toBe(1);
+  });
+
+  it('applies the CURRENT user conflict shield, not the originating profile', () => {
+    const j = adaptPoolJobsForUser(
+      entry([
+        { company: 'My Current Employer Inc', matchScore: 95, postedDaysAgo: 3 },
+        { company: 'Other Corp', matchScore: 95, postedDaysAgo: 3 },
+      ], new Date().toISOString()),
+      mkProfile({ currentEmployer: 'My Current Employer Inc', excludedEmployers: [] }),
+      {},
+    );
+    expect(j!.jobs.map((x) => x.company)).toEqual(['Other Corp']);
+    expect(j!.droppedConflict).toBe(1);
+  });
+
+  it('honours minMatchScore', () => {
+    const j = adaptPoolJobsForUser(
+      entry([
+        { company: 'A', matchScore: 70, postedDaysAgo: 3 },
+        { company: 'B', matchScore: 95, postedDaysAgo: 3 },
+      ], new Date().toISOString()),
+      mkProfile(),
+      { minMatchScore: 90 },
+    );
+    expect(j!.jobs.map((x) => x.company)).toEqual(['B']);
+  });
+
+  it('returns null when nothing survives, so the caller can run fresh', () => {
+    const j = adaptPoolJobsForUser(
+      entry([{ company: 'Old', matchScore: 10, postedDaysAgo: 400 }], new Date().toISOString()),
+      mkProfile(),
+      {},
+    );
+    expect(j).toBeNull();
+  });
+});
+
+describe('DiscoveryPool — shared fingerprint', () => {
+  it('is identical for different users with the same skills/filters', () => {
+    const a = poolKeyOf(mkProfile({ userId: 'u1', updatedAt: '2020-01-01' }), { keywords: ['react'] });
+    const b = poolKeyOf(mkProfile({ userId: 'u2', updatedAt: '2030-06-01' }), { keywords: ['react'] });
+    expect(a).toBe(b);
+  });
+
+  it('differs when skills or filters differ', () => {
+    const a = poolKeyOf(mkProfile({ primarySkills: ['react'] }), {});
+    const b = poolKeyOf(mkProfile({ primarySkills: ['go'] }), {});
+    const c = poolKeyOf(mkProfile(), { keywords: ['devops'] });
+    expect(a).not.toBe(b);
+    expect(poolKeyOf(mkProfile(), {})).not.toBe(c);
+  });
+});
 
 describe('Enforce 1 — STRICT 45-DAY freshness filter', () => {
   const jobs = (days: (number | undefined)[]) =>

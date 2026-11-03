@@ -9,6 +9,7 @@ import {
   SystemAuditLog,
   AgentRunLog,
   DiscoveryJob,
+  DiscoveryPoolEntry,
 } from './types.js';
 import { getStore, StateStore } from './storage.js';
 
@@ -22,6 +23,7 @@ export interface DatabaseSchema {
   systemAuditLogs: SystemAuditLog[];
   agentLogs: AgentRunLog[];
   discoveryJobs: DiscoveryJob[];
+  discoveryPool: DiscoveryPoolEntry[];
 }
 
 class DatabaseService {
@@ -46,6 +48,7 @@ class DatabaseService {
         if (!stored.accounts) stored.accounts = [];
         if (!stored.systemAuditLogs) stored.systemAuditLogs = [];
         if (!stored.discoveryJobs) stored.discoveryJobs = [];
+        if (!stored.discoveryPool) stored.discoveryPool = [];
         // Repair legacy/partial jobs once at hydration: real Gemini output
         // may lack the skill arrays the UI assumes. One pass, then persisted.
         stored.jobs = stored.jobs.map((j: any) => ({
@@ -495,6 +498,7 @@ class DatabaseService {
       accounts: [account1],
       systemAuditLogs: seedAudits,
       discoveryJobs: [],
+      discoveryPool: [],
       agentLogs: [
         {
           id: 'log_seed_1',
@@ -874,6 +878,33 @@ class DatabaseService {
       this.persist();
     }
     return job;
+  }
+
+  // ─── DiscoveryPool (shared market scans) ──────────────────────────────────
+  getPoolEntry(poolKey: string): DiscoveryPoolEntry | undefined {
+    return this.data.discoveryPool.find((e) => e.poolKey === poolKey);
+  }
+
+  putPoolEntry(entry: DiscoveryPoolEntry): void {
+    const arr = this.data.discoveryPool;
+    const idx = arr.findIndex((e) => e.poolKey === entry.poolKey);
+    if (idx >= 0) arr[idx] = entry;
+    else arr.push(entry);
+    // Bounded pool: evict least-recently-requested entries beyond the cap.
+    if (arr.length > 50) {
+      arr.sort((a, b) => b.lastRequestedAt.localeCompare(a.lastRequestedAt));
+      this.data.discoveryPool = arr.slice(0, 50);
+    }
+    this.persist();
+  }
+
+  /** Cron sweeper input: most-recently-requested bounded entries. */
+  getActivePoolEntries(sinceDays = 7, limit = 50): DiscoveryPoolEntry[] {
+    const cutoff = new Date(Date.now() - sinceDays * 86_400_000).toISOString();
+    return this.data.discoveryPool
+      .filter((e) => e.lastRequestedAt >= cutoff)
+      .sort((a, b) => b.lastRequestedAt.localeCompare(a.lastRequestedAt))
+      .slice(0, limit);
   }
 }
 

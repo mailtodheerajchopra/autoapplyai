@@ -98,6 +98,14 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
   const rawDiscovered = await discoverJobsWithAgent(profile, options);
   await markStage(userId, jobId, 'running', 55, `Parsed ${rawDiscovered.length} raw openings`);
 
+  // Share the scan: store the raw template in the shared pool so any user with
+  // this market fingerprint reuses it (per-user filters apply at serve time).
+  try {
+    savePoolEntryFromScan(profile, options, rawDiscovered);
+  } catch (poolErr) {
+    console.warn('[discovery] pool write skipped:', poolErr);
+  }
+
   // Enforce 1: STRICT 45-DAY FRESHNESS RULE (see filterStaleJobs)
   // Enforce 2: STRICT CURRENT/LAST EMPLOYER EXCLUSION RULE (see filterConflictJobs)
   const freshJobs = filterStaleJobs(rawDiscovered);
@@ -208,13 +216,64 @@ export function startDiscovery(userId: string, options: DiscoveryOptions): { job
     return { jobId: running.id, status: running.status, cached: false };
   }
 
-  // 2) Free-tier cooldown.
+  // 2) Shared discovery pool: another user already scanned this exact market
+  //    within the TTL → instant completion, ZERO agent quota. This check runs
+  //    before the per-user cooldown (pool serves cost quota, not spent here).
+  const poolKey = poolKeyOf(profile, options);
+  const poolEntry = db.getPoolEntry(poolKey);
+  if (poolEntry && Date.now() - new Date(poolEntry.fetchedAt).getTime() < POOL_TTL_MS) {
+    const adapted = adaptPoolJobsForUser(poolEntry, profile, options);
+    if (adapted) {
+      const now = new Date().toISOString();
+      console.log(`[discovery] user ${userId} served from shared pool ${poolKey.slice(0, 8)} (${adapted.jobs.length} jobs)`);
+      db.putPoolEntry({ ...poolEntry, lastRequestedAt: now, requestCount: poolEntry.requestCount + 1 });
+      db.addJobs(adapted.jobs);
+
+      const result: DiscoveryJobResult = {
+        jobsFound: adapted.jobs.length,
+        staleJobsFiltered: adapted.droppedStale,
+        conflictJobsBlocked: adapted.droppedConflict,
+      };
+      const job: DiscoveryJob = {
+        id: 'disc_' + crypto.randomUUID().slice(0, 8),
+        userId,
+        status: 'completed',
+        createdAt: now,
+        completedAt: now,
+        updatedAt: now,
+        options,
+        progress: 100,
+        stage: `Served from shared discovery pool (no agent quota used)`,
+        result,
+      };
+      db.addDiscoveryJob(job);
+      db.addAgentLog({
+        id: 'log_' + crypto.randomUUID().slice(0, 8),
+        userId,
+        triggeredAt: now,
+        status: 'completed',
+        keywords: options.keywords || profile.targetRoles,
+        sources: options.sources || ['Shared Pool'],
+        jobsFound: adapted.jobs.length,
+        jobsFilteredOldCount: adapted.droppedStale,
+        jobsFilteredConflictCount: adapted.droppedConflict,
+        message: `Served ${adapted.jobs.length} qualified roles from the shared discovery pool (shared scan, zero extra agent quota).`,
+        details: [
+          ...adapted.jobs.map((j) => `${j.company}: ${j.title} (${j.matchScore}% fit, Posted ${j.postedDaysAgo}d ago)`),
+          `Pool age: ${Math.max(0, Math.round((Date.now() - new Date(poolEntry.fetchedAt).getTime()) / 3_600_000))}h since the market scan.`,
+        ],
+      });
+      return { jobId: job.id, status: 'completed', cached: true, result };
+    }
+  }
+
+  // 3) Free-tier cooldown.
   if (running && Date.now() - new Date(running.createdAt).getTime() < USER_COOLDOWN_MS && running.status !== 'failed') {
     const cooldownSeconds = Math.max(1, Math.ceil((USER_COOLDOWN_MS - (Date.now() - new Date(running.createdAt).getTime())) / 1000));
     return { jobId: running.id, status: running.status, cooldownSeconds, cached: false };
   }
 
-  // 3) Result cache: identical scan within TTL → instant completion, zero quota.
+  // 4) Result cache: identical scan within TTL → instant completion, zero quota.
   const key = cacheKey(userId, profile, options);
   const cachedEntry = resultCache.get(key);
   if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
@@ -234,7 +293,7 @@ export function startDiscovery(userId: string, options: DiscoveryOptions): { job
     return { jobId: job.id, status: 'completed', cached: true, result: cachedEntry.result };
   }
 
-  // 4) Fresh run.
+  // 5) Fresh run.
   const job: DiscoveryJob = {
     id: 'disc_' + crypto.randomUUID().slice(0, 8),
     userId,
@@ -289,4 +348,178 @@ export function asHttpError(err: unknown): { httpStatus: number; message: string
     return { httpStatus: (err as { httpStatus: number }).httpStatus, message: (err as { message: string }).message };
   }
   return null;
+}
+
+// ─── Shared DiscoveryPool ────────────────────────────────────────────────────
+// ONE market scan per (skills fingerprint + search filters), shared across
+// users. The pool stores template postings unfiltered by user-specific rules;
+// each user's 45d freshness, conflict shield, location and min-score are
+// applied at serve time. Free-tier quota math: N identical users = 1 agent run.
+import { DiscoveryPoolEntry, PoolSkillContext } from './types.js';
+
+const POOL_TTL_MS = 4 * 60 * 60_000; // entry freshness window (matches the cron cadence)
+
+/** Shared fingerprint — deliberately excludes userId and profile.updatedAt. */
+export function poolKeyOf(profile: CandidateProfile, options: DiscoveryOptions): string {
+  const fp = JSON.stringify({
+    k: options.keywords, s: options.sources, l: options.location, r: options.remoteOnly, m: options.minMatchScore,
+    skills: profile.primarySkills,
+    cats: profile.skills?.map((c) => c.items).flat().sort(),
+    yrs: profile.yearsOfExperience,
+  });
+  return crypto.createHash('sha1').update(fp).digest('hex').slice(0, 24);
+}
+
+function skillContextOf(profile: CandidateProfile): PoolSkillContext {
+  return {
+    primarySkills: profile.primarySkills,
+    skillItems: profile.skills?.map((c) => c.items).flat() || [],
+    targetRoles: profile.targetRoles,
+    yearsOfExperience: profile.yearsOfExperience,
+    currentEmployer: profile.currentEmployer,
+    excludedEmployers: [],
+    location: profile.location,
+    preferredWorkType: profile.workdayPreferences?.preferredWorkType,
+  };
+}
+
+/** Prompt-able profile rebuilt from a stored skill context (used by the sweeper). */
+function profileFromSkillContext(ctx: PoolSkillContext): CandidateProfile {
+  return {
+    id: 'pool', userId: 'pool', fullName: 'Discovery Pool', email: '', phone: '',
+    location: ctx.location || 'United States', headline: '', summary: '',
+    linkedinUrl: '', githubUrl: '', portfolioUrl: '',
+    currentEmployer: ctx.currentEmployer || '',
+    excludedEmployers: [],
+    skills: [{ category: 'Primary', items: ctx.skillItems }],
+    primarySkills: ctx.primarySkills,
+    workdayPreferences: { preferredWorkType: ctx.preferredWorkType } as unknown as CandidateProfile['workdayPreferences'],
+    targetRoles: ctx.targetRoles,
+    targetLocations: ctx.location ? [ctx.location] : [],
+    yearsOfExperience: ctx.yearsOfExperience,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function normalizeTemplateJob(t: any): any {
+  return {
+    ...t,
+    company: t.company || 'Unknown',
+    title: t.title || 'Untitled',
+    requiredSkills: Array.isArray(t.requiredSkills) ? t.requiredSkills : [],
+    matchingSkills: Array.isArray(t.matchingSkills) ? t.matchingSkills : [],
+    missingSkills: Array.isArray(t.missingSkills) ? t.missingSkills : [],
+    description: t.description || '',
+  };
+}
+
+/**
+ * Pure pool→user adapter: ages postings by the elapsed pool age, then applies
+ * the USER-SIDE filters only (45d, conflict shield, min score). Exported for
+ * unit tests. Returns null when the pooled scan yields nothing for this user
+ * (caller falls through to a fresh run).
+ */
+export function adaptPoolJobsForUser(
+  entry: Pick<DiscoveryPoolEntry, 'jobs' | 'fetchedAt'>,
+  profile: CandidateProfile,
+  options: DiscoveryOptions,
+): { jobs: JobPosting[]; droppedStale: number; droppedConflict: number; droppedScore: number } | null {
+  const now = Date.now();
+  const ageBumpDays = Math.floor((now - new Date(entry.fetchedAt).getTime()) / 86_400_000);
+
+  const aged = entry.jobs.map((t: any) => {
+    const baseDays = typeof t.postedDaysAgo === 'number' ? t.postedDaysAgo : 10;
+    return { ...t, postedDaysAgo: baseDays + ageBumpDays };
+  });
+
+  const fresh = filterStaleJobs(aged);
+  const droppedStale = aged.length - fresh.length;
+
+  const excluded = excludedEmployers(profile);
+  const nonConflict = filterConflictJobs(fresh, excluded);
+  const droppedConflict = fresh.length - nonConflict.length;
+
+  const minScore = options.minMatchScore ?? 0;
+  const scoreOk = nonConflict.filter((j) => ((j as { matchScore?: number }).matchScore ?? 0) >= minScore);
+  const droppedScore = nonConflict.length - scoreOk.length;
+
+  if (scoreOk.length === 0) return null;
+
+  const jobs: JobPosting[] = scoreOk.map((t: any) => ({
+    ...t,
+    id: 'job_' + crypto.randomUUID().slice(0, 8),
+    userId: profile.userId,
+    discoveredAt: new Date().toISOString(),
+    isStale: false,
+    isConflictOfInterest: false,
+    requiredSkills: Array.isArray(t.requiredSkills) ? t.requiredSkills : [],
+    matchingSkills: Array.isArray(t.matchingSkills) ? t.matchingSkills : [],
+    missingSkills: Array.isArray(t.missingSkills) ? t.missingSkills : [],
+    description: t.description || '',
+    fitRationale: t.fitRationale || '',
+  }));
+
+  return { jobs, droppedStale, droppedConflict, droppedScore };
+}
+
+/** Store / refresh a pool template from a raw scan (called on every fresh run). */
+export function savePoolEntryFromScan(
+  profile: CandidateProfile,
+  options: DiscoveryOptions,
+  rawDiscovered: Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>[],
+): void {
+  const now = new Date().toISOString();
+  const poolKey = poolKeyOf(profile, options);
+  const prev = db.getPoolEntry(poolKey);
+  db.putPoolEntry({
+    poolKey,
+    keywords: options.keywords,
+    sources: options.sources,
+    location: options.location,
+    remoteOnly: options.remoteOnly,
+    skillContext: skillContextOf(profile),
+    jobs: rawDiscovered.map(normalizeTemplateJob) as DiscoveryPoolEntry['jobs'],
+    fetchedAt: now,
+    lastRequestedAt: now,
+    requestCount: (prev?.requestCount || 0) + 1,
+  });
+}
+
+/**
+ * Cron sweeper: re-market-scans the most-requested pool entries so users find
+ * new postings without triggering a run themselves. Bounded by maxEntries to
+ * respect the free-tier budget (2 refreshes per 4h tick by default).
+ */
+export async function sweepDiscoveryPool(maxEntries = 2): Promise<{
+  swept: number;
+  results: Array<{ poolKey: string; jobsFound: number; error?: string }>;
+}> {
+  const entries = db.getActivePoolEntries(7, maxEntries);
+  const results: Array<{ poolKey: string; jobsFound: number; error?: string }> = [];
+
+  for (const entry of entries) {
+    const profile = profileFromSkillContext(entry.skillContext);
+    const options: DiscoveryOptions = {
+      keywords: entry.keywords, sources: entry.sources,
+      location: entry.location, remoteOnly: entry.remoteOnly,
+    };
+    try {
+      console.log(`[sweep] refreshing pool entry ${entry.poolKey.slice(0, 8)}…`);
+      const raw = await discoverJobsWithAgent(profile, options);
+      const now = new Date().toISOString();
+      db.putPoolEntry({
+        ...entry,
+        jobs: raw.map(normalizeTemplateJob) as DiscoveryPoolEntry['jobs'],
+        fetchedAt: now,
+        lastRequestedAt: now,
+      });
+      results.push({ poolKey: entry.poolKey, jobsFound: raw.length });
+      console.log(`[sweep] ${entry.poolKey.slice(0, 8)} → ${raw.length} fresh postings`);
+    } catch (err) {
+      console.error('[sweep] entry refresh failed:', err);
+      results.push({ poolKey: entry.poolKey, jobsFound: 0, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return { swept: entries.length, results };
 }

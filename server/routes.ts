@@ -9,10 +9,36 @@ import {
   generateWorkdayAutofillPackage,
   regenerateAnswerWithGuidance,
 } from './gemini.js';
-import { asHttpError, pollDiscovery, startDiscovery } from './discovery.js';
+import {
+  asHttpError, pollDiscovery, startDiscovery, sweepDiscoveryPool,
+} from './discovery.js';
 import { JobPosting, WorkdayApplication, ResumeDocument, WorkdayCredentialAccount } from './types.js';
 
 export const apiRouter = Router();
+
+// ==========================================
+// Cron: shared DiscoveryPool sweeper (Vercel Cron)
+// ==========================================
+// Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when that env var is
+// set. Public requests without the exact bearer are rejected.
+
+apiRouter.post('/cron/discovery-sweep', async (req: Request, res: Response) => {
+  const expected = process.env.CRON_SECRET;
+  const provided = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!expected || provided !== expected) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  try {
+    const summary = await sweepDiscoveryPool(2);
+    // Persist synchronously so a subsequent invocation sees refreshed entries.
+    res.json(summary);
+  } catch (err) {
+    console.error('[cron] sweep failed:', err);
+    res.status(500).json({ error: 'Sweep failed' });
+  }
+});
+
 
 // ==========================================
 // Authentication & Session Endpoints
