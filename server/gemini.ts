@@ -219,8 +219,10 @@ Provide a crisp professional headline and executive summary.`;
     };
   })();
 
+  // The async pipeline tolerates slow free-tier generations; the resume
+  // upload request blocks, but structured parsing justifies the wait.
   const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("Gemini resume parsing timeout (8s limit)")), 8000)
+    setTimeout(() => reject(new Error("Gemini resume parsing timeout (25s limit)")), 25000)
   );
 
   try {
@@ -340,8 +342,10 @@ For each job, provide realistic job descriptions, exact required skills, portal 
       },
     });
 
+    // Free-tier models can take 10-20s to produce the full structured JSON.
+    // Background execution + poll-based UX make 30s acceptable end to end.
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Job discovery timeout (8s limit)")), 8000)
+      setTimeout(() => reject(new Error("Job discovery timeout (30s limit)")), 30000)
     );
 
     const response = await Promise.race([callPromise, timeoutPromise]);
