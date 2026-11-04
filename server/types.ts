@@ -280,12 +280,20 @@ export interface DiscoveryOptions {
   location?: string;
   remoteOnly?: boolean;
   minMatchScore?: number;
+  /**
+   * Incremental-scan knob: when set (e.g. 2 for the cron sweeper), the model is
+   * asked to return only postings from the last N days. Omitted for full
+   * first-time scans, which cover the standard 45-day window.
+   */
+  recencyWindowDays?: number;
 }
 
 export interface DiscoveryJobResult {
   jobsFound: number;
   staleJobsFiltered: number;
   conflictJobsBlocked: number;
+  /** Postings hidden because their experience demand fits badly (Enforce 4). */
+  experienceFiltered?: number;
 }
 
 /**
@@ -303,8 +311,12 @@ export interface DiscoveryPoolEntry {
   /** Skill context captured from the originating profile (drives the Gemini prompt). */
   skillContext: PoolSkillContext;
   /** Template postings as fetched — pre-user-filter (userId set to 'pool'). */
-  jobs: Array<Omit<JobPosting, 'id' | 'userId'> & { id?: string }>;
+  /** Template postings as fetched — pre-user-filter (userId omitted / 'pool'). */
+  jobs: Array<Omit<JobPosting, 'id' | 'userId'> & { id?: string; jobFetchedAt?: string }>;
+  /** Last (re-)scan of this market — keeps the pool TTL alive across sweeps. */
   fetchedAt: string;
+  /** When the scan first covered this fingerprint (full-history marker). */
+  firstScanAt: string;
   /** Recency signal for the cron sweeper (top-N active fingerprints refresh first). */
   lastRequestedAt: string;
   requestCount: number;

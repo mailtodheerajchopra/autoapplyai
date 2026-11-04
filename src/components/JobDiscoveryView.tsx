@@ -45,9 +45,10 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
   // Agent configuration modal / trigger state
   const [isAgentRunning, setIsAgentRunning] = useState<boolean>(false);
   const [agentProgress, setAgentProgress] = useState<number | null>(null);
-  const [agentKeywords, setAgentKeywords] = useState<string>(
-    profile?.targetRoles.join(', ') || 'Software Engineer, Full Stack Developer'
-  );
+  // Resume privacy: keywords extracted from the CV are NOT prefilled/shown
+  // anywhere in the UI. Sending an empty list is safe — the server falls back
+  // to the profile's own targetRoles internally.
+  const [agentKeywords, setAgentKeywords] = useState<string>('');
   const [selectedSources, setSelectedSources] = useState<string[]>([
     'LinkedIn',
     'Naukri',
@@ -268,7 +269,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
                 type="text"
                 value={agentKeywords}
                 onChange={(e) => setAgentKeywords(e.target.value)}
-                placeholder="Search keywords or roles (e.g. Staff Engineer, React, Node.js)"
+                placeholder="Refine search (optional) — leave blank to use your resume's target roles"
                 className="w-full h-10 px-3.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
               />
             </div>

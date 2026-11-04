@@ -65,6 +65,7 @@ describe('async discovery pipeline (202 + poll + cooldown)', () => {
       jobsFound: expect.any(Number),
       staleJobsFiltered: expect.any(Number),
       conflictJobsBlocked: expect.any(Number),
+      experienceFiltered: undefined,
     });
 
     // 3) The discovered jobs actually landed in the DB

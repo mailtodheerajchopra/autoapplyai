@@ -134,6 +134,52 @@ export function filterLocationJobs<T extends { location?: string; remoteType?: s
   return { kept, dropped };
 }
 
+/**
+ * Enforce 4 — EXPERIENCE-MATCH RULE: a posting that explicitly demands an
+ * experience level the candidate is meaningfully short of is hidden, as are
+ * internships for established professionals. Signals: "N+ years" in the
+ * description, and seniority words in the title. Advisory on mismatch ≤ 2y
+ * (bigger gaps hide the posting; a smaller gap is still showable).
+ */
+const SENIORITY_TITLES: Array<[RegExp, number]> = [
+  [/\b(?:intern|internship|trainee)\b/i, 0],
+  [/\b(?:director|vice president|vp of|head of)\b/i, 10],
+  [/\bprincipal\b/i, 8],
+  [/\bstaff\b/i, 6],
+];
+
+export function filterExperienceJobs<T extends { title?: string; description?: string }>(
+  jobs: T[],
+  yearsOfExperience: number,
+): { kept: T[]; dropped: number } {
+  let dropped = 0;
+  const kept = jobs.filter((j) => {
+    const title = (j.title || '').toLowerCase();
+    const desc = j.description || '';
+
+    // Explicit "N+ years" demand in the posting text
+    const demanded = desc.match(/([0-9]{1,2})(?:\s*\+)?\s*(?:\-|to\s)?\s*[0-9]{0,2}\s*years?\b/i);
+    if (demanded) {
+      const needed = parseInt(demanded[1], 10);
+      // optimal experience > candidate's +2 → hidden; exact is fine
+      if (needed > yearsOfExperience + 2) { dropped++; return false; }
+    }
+
+    // Seniority-word heuristics. Two kinds of rules:
+    //  - minimum-years titles (Staff/Principal/Director): hidden when the
+    //    candidate hasn't reached that level yet
+    //  - intern/trainee titles: hidden for established professionals (3y+)
+    for (const [re, seniorYears] of SENIORITY_TITLES) {
+      if (!re.test(title)) continue;
+      if (seniorYears === 0) {
+        if (yearsOfExperience >= 3) { dropped++; return false; }
+      } else if (yearsOfExperience < seniorYears) { dropped++; return false; }
+    }
+    return true;
+  });
+  return { kept, dropped };
+}
+
 function cacheKey(userId: string, profile: CandidateProfile, options: DiscoveryOptions): string {  const fingerprint = JSON.stringify({
     u: userId,
     o: { k: options.keywords, s: options.sources, l: options.location, r: options.remoteOnly, m: options.minMatchScore },
@@ -181,7 +227,12 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
     await markStage(userId, jobId, 'running', 80, `Location policy: ${droppedLocationCount} beyond preferred region`);
   }
 
-  const newJobs: JobPosting[] = locatedJobs.map((j) => ({
+  // Enforce 4: experience demand guard.
+  const { kept: experienceJobs, dropped: droppedExperienceCount } = filterExperienceJobs(
+    locatedJobs, profile.yearsOfExperience || 0,
+  );
+
+  const newJobs: JobPosting[] = experienceJobs.map((j) => ({
     ...j,
     id: 'job_' + crypto.randomUUID().slice(0, 8),
     userId,
@@ -238,6 +289,7 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
       jobsFound: newJobs.length,
       staleJobsFiltered: droppedStaleCount,
       conflictJobsBlocked: droppedConflictCount,
+      experienceFiltered: droppedExperienceCount > 0 ? droppedExperienceCount : undefined,
     },
     jobIds: newJobs.map(j => j.id),
   };
@@ -296,6 +348,7 @@ export function startDiscovery(userId: string, options: DiscoveryOptions): { job
         jobsFound: adapted.jobs.length,
         staleJobsFiltered: adapted.droppedStale,
         conflictJobsBlocked: adapted.droppedConflict,
+        experienceFiltered: adapted.droppedExperience > 0 ? adapted.droppedExperience : undefined,
       };
       const job: DiscoveryJob = {
         id: 'disc_' + crypto.randomUUID().slice(0, 8),
@@ -487,13 +540,16 @@ export function adaptPoolJobsForUser(
   entry: Pick<DiscoveryPoolEntry, 'jobs' | 'fetchedAt'>,
   profile: CandidateProfile,
   options: DiscoveryOptions,
-): { jobs: JobPosting[]; droppedStale: number; droppedConflict: number; droppedLocation: number; droppedScore: number } | null {
+): { jobs: JobPosting[]; droppedStale: number; droppedConflict: number; droppedLocation: number; droppedExperience: number; droppedScore: number } | null {
   const now = Date.now();
-  const ageBumpDays = Math.floor((now - new Date(entry.fetchedAt).getTime()) / 86_400_000);
+  // Per-job aging beats entry-wide aging: incremental sweeps add fresh jobs to
+  // an old pool without touching the historical postings' fetch dates.
+  const ageBumpFor = (t: { jobFetchedAt?: string }) =>
+    Math.floor((now - new Date(t.jobFetchedAt || entry.fetchedAt).getTime()) / 86_400_000);
 
   const aged = entry.jobs.map((t: any) => {
     const baseDays = typeof t.postedDaysAgo === 'number' ? t.postedDaysAgo : 10;
-    return { ...t, postedDaysAgo: baseDays + ageBumpDays };
+    return { ...t, postedDaysAgo: baseDays + ageBumpFor(t) };
   });
 
   const fresh = filterStaleJobs(aged);
@@ -508,8 +564,13 @@ export function adaptPoolJobsForUser(
     nonConflict, profile.location || '', profile.targetLocations || [],
   );
 
+  // Enforce 4: experience demand vs the candidate's years.
+  const { kept: experienceMatched, dropped: droppedExperience } = filterExperienceJobs(
+    located, profile.yearsOfExperience || 0,
+  );
+
   const minScore = options.minMatchScore ?? 0;
-  const scoreOk = located.filter((j) => ((j as { matchScore?: number }).matchScore ?? 0) >= minScore);
+  const scoreOk = experienceMatched.filter((j) => ((j as { matchScore?: number }).matchScore ?? 0) >= minScore);
   const droppedScore = located.length - scoreOk.length;
 
   if (scoreOk.length === 0) return null;
@@ -528,7 +589,7 @@ export function adaptPoolJobsForUser(
     fitRationale: t.fitRationale || '',
   }));
 
-  return { jobs, droppedStale, droppedConflict, droppedLocation, droppedScore };
+  return { jobs, droppedStale, droppedConflict, droppedLocation, droppedExperience, droppedScore };
 }
 
 /** Store / refresh a pool template from a raw scan (called on every fresh run). */
@@ -547,11 +608,50 @@ export function savePoolEntryFromScan(
     location: options.location,
     remoteOnly: options.remoteOnly,
     skillContext: skillContextOf(profile),
-    jobs: rawDiscovered.map(normalizeTemplateJob) as DiscoveryPoolEntry['jobs'],
+    jobs: rawDiscovered.map((j) => ({ ...normalizeTemplateJob(j), jobFetchedAt: now })) as DiscoveryPoolEntry['jobs'],
     fetchedAt: now,
+    firstScanAt: prev?.firstScanAt || now,
     lastRequestedAt: now,
     requestCount: (prev?.requestCount || 0) + 1,
   });
+}
+
+const TEMPLATE_MAX_JOBS = 60;
+
+/**
+ * Incremental scan merge: a fresh scan (typically the cron sweeper asking the
+ * model for "jobs posted in the last 1–2 days") is folded INTO the existing
+ * history instead of replacing it. Dedupe key = company+title (case/space
+ * insensitive); the newest posting of a pair wins. History caps at
+ * TEMPLATE_MAX_JOBS, pruned oldest-and-stale-first so the serve-time 45-day
+ * window never shows calendar-rotten entries to users.
+ */
+export function mergePoolJobs(
+  existing: Array<Partial<DiscoveryPoolEntry['jobs'][number]>>,
+  fresh: Array<Partial<DiscoveryPoolEntry['jobs'][number]>>,
+  now: string,
+): DiscoveryPoolEntry['jobs'] {
+  const keyOf = (j: any) =>
+    `${(j.company || '').toLowerCase().replace(/\s+/g, '')}|${(j.title || '').toLowerCase().replace(/\s+/g, '')}`;
+
+  const merged = new Map<string, any>();
+  for (const j of existing) merged.set(keyOf(j), j);
+  for (const j of fresh) {
+    const withStamp = { ...normalizeTemplateJob(j), jobFetchedAt: now };
+    merged.set(keyOf(j), withStamp); // fresh data wins on collision
+  }
+
+  const all = Array.from(merged.values());
+  // Prune: drop postings that are already >60 days from their fetch moment.
+  const nowMs = Date.parse(now);
+  const prunable = all.filter((j: any) => {
+    const fetched = Date.parse(String(j.jobFetchedAt || j.postedDate || now));
+    const base = typeof j.postedDaysAgo === 'number' ? j.postedDaysAgo : 10;
+    return nowMs - fetched + base * 86_400_000 < 61 * 86_400_000;
+  });
+  // Cap: keep the freshest N by posting age (asc).
+  prunable.sort((a: any, b: any) => (a.postedDaysAgo ?? 10) - (b.postedDaysAgo ?? 10));
+  return prunable.slice(0, TEMPLATE_MAX_JOBS);
 }
 
 /**
@@ -574,11 +674,14 @@ export async function sweepDiscoveryPool(maxEntries = 2): Promise<{
     };
     try {
       console.log(`[sweep] refreshing pool entry ${entry.poolKey.slice(0, 8)}…`);
-      const raw = await discoverJobsWithAgent(profile, options);
+      // Incremental mode: ask the model ONLY for postings from the last ~2 days
+      // so the sweep costs the same quota but exclusively buys new coverage.
+      const raw = await discoverJobsWithAgent(profile, { ...options, recencyWindowDays: 2 });
       const now = new Date().toISOString();
       db.putPoolEntry({
         ...entry,
-        jobs: raw.map(normalizeTemplateJob) as DiscoveryPoolEntry['jobs'],
+        jobs: mergePoolJobs(entry.jobs, raw, now),
+        firstScanAt: entry.firstScanAt || entry.fetchedAt,
         fetchedAt: now,
         lastRequestedAt: now,
       });

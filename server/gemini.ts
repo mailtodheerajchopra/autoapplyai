@@ -304,6 +304,8 @@ export async function discoverJobsWithAgent(
     location?: string;
     remoteOnly?: boolean;
     minMatchScore?: number;
+    /** Incremental-sweep mode: restrict the model to the last N days. */
+    recencyWindowDays?: number;
   }
 ): Promise<Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>[]> {
   const allSkills = profile.skills.flatMap(s => s.items).concat(profile.primarySkills);
@@ -324,7 +326,7 @@ STRICT CANDIDATE SAFETY FILTERS:
    Candidate's excluded employers list: [${excludedList.join(', ')}].
    NEVER return or apply to jobs at these excluded companies under any circumstance.
 2. JOB POSTING FRESHNESS:
-   Strict requirement: ONLY return jobs posted within the last 45 days (between 1 and 45 days ago). Completely discard any job postings older than 45 days. Set postedDaysAgo to an integer between 1 and 45.
+   Strict requirement: ONLY return jobs posted within the last 45 days (between 1 and 45 days ago). Completely discard any job postings older than 45 days. Set postedDaysAgo to an integer between 1 and 45.${searchOptions.recencyWindowDays ? `\n   INCREMENTAL SWEEP MODE: this is a daily refresh scan. ONLY return jobs posted within the last ${searchOptions.recencyWindowDays} day(s) — postedDaysAgo must be between 1 and ${searchOptions.recencyWindowDays}. Do NOT repeat well-known older postings; surface ONLY fresh announcements from today/yesterday.` : ''}
 
 Generate 6 realistic, highly relevant job openings actively hiring in tech companies (including major enterprises using Workday like Adobe, Salesforce, Cisco, Netflix, Visa, Walmart, as well as listings seen on LinkedIn and Naukri).
 For each job, provide realistic job descriptions, exact required skills, portal type (specify 'workday' for enterprise company career sites, or 'greenhouse' / 'lever' / 'direct'), calculate an objective matchScore (0-100), identify matching skills, missing skills, postedDaysAgo (1-45), and provide a 1-sentence fit rationale.`;
@@ -406,8 +408,9 @@ For each job, provide realistic job descriptions, exact required skills, portal 
     const response = await callPromise;
 
     const parsed = deepSanitize(JSON.parse(response.text || "[]"));
+    const recencyCap = searchOptions.recencyWindowDays ?? 45;
     return parsed.map((item: any) => {
-      const daysAgo = typeof item.postedDaysAgo === 'number' ? Math.max(1, Math.min(45, item.postedDaysAgo)) : Math.floor(Math.random() * 20) + 1;
+      const daysAgo = typeof item.postedDaysAgo === 'number' ? Math.max(1, Math.min(recencyCap, item.postedDaysAgo)) : Math.floor(Math.random() * recencyCap) + 1;
       const postedDate = new Date(Date.now() - daysAgo * 86400000).toISOString();
       const isConflict = Boolean(
         excludedList.some(ex => ex && item.company.toLowerCase().includes(ex.toLowerCase()))
@@ -428,7 +431,7 @@ For each job, provide realistic job descriptions, exact required skills, portal 
     });
   } catch (error) {
     console.error("Gemini job search error:", error);
-    return getFallbackDiscoveredJobs(profile);
+    return getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45);
   }
 }
 
@@ -702,7 +705,7 @@ function extractFallbackResume(text: string): ResumeDocument['parsedProfile'] {
   };
 }
 
-function getFallbackDiscoveredJobs(profile: CandidateProfile): Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>[] {
+function getFallbackDiscoveredJobs(profile: CandidateProfile, recencyCap = 45): Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>[] {
   const excluded = Array.from(new Set([profile.currentEmployer, ...(profile.excludedEmployers || [])].filter(Boolean)));
   
   const rawJobs = [
@@ -789,10 +792,14 @@ function getFallbackDiscoveredJobs(profile: CandidateProfile): Omit<JobPosting, 
 
   return rawJobs.map(j => {
     const isConflict = excluded.some(ex => ex && j.company.toLowerCase().includes(ex.toLowerCase()));
+    // Respect the incremental-sweep window in fallback mode too, so degraded
+    // sweeps can never pollute the pool history with back-dated postings.
+    const daysAgo = Math.min(j.postedDaysAgo, recencyCap);
     return {
       ...j,
-      postedDate: new Date(Date.now() - j.postedDaysAgo * 86400000).toISOString(),
-      isStale: j.postedDaysAgo > 45,
+      postedDaysAgo: daysAgo,
+      postedDate: new Date(Date.now() - daysAgo * 86400000).toISOString(),
+      isStale: daysAgo > 45,
       isConflictOfInterest: isConflict,
       conflictReason: isConflict ? `Matches excluded/current employer (${profile.currentEmployer})` : undefined,
     };

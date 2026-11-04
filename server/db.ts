@@ -49,6 +49,20 @@ class DatabaseService {
         if (!stored.systemAuditLogs) stored.systemAuditLogs = [];
         if (!stored.discoveryJobs) stored.discoveryJobs = [];
         if (!stored.discoveryPool) stored.discoveryPool = [];
+        // Env-driven admin credential rotation: application boot applies the
+        // ADMIN_EMAIL / ADMIN_PASSWORD override to the stored admin user, so
+        // secret rotation never requires code changes or snapshot surgery.
+        if (process.env.ADMIN_EMAIL || process.env.ADMIN_PASSWORD) {
+          const admin = stored.users.find((u) => u.id === 'usr_admin');
+          if (admin) {
+            if (process.env.ADMIN_EMAIL) admin.email = process.env.ADMIN_EMAIL.trim().toLowerCase();
+            if (process.env.ADMIN_PASSWORD) {
+              admin.salt = crypto.randomBytes(16).toString('hex');
+              admin.passwordHash = crypto.pbkdf2Sync(process.env.ADMIN_PASSWORD, admin.salt, 1000, 64, 'sha512').toString('hex');
+            }
+            console.log('[seed] admin credential applied from environment');
+          }
+        }
         // Repair legacy/partial jobs once at hydration: real Gemini output
         // may lack the skill arrays the UI assumes. One pass, then persisted.
         stored.jobs = stored.jobs.map((j: any) => ({
@@ -103,11 +117,21 @@ class DatabaseService {
   }
 
   private buildAdminUser(): User {
+    // SECURITY (open-source friendly): the admin credentials must never live
+    // in code. Resolution order:
+    //   1. ADMIN_EMAIL + ADMIN_PASSWORD env vars → hash them here
+    //   2. otherwise → a random one-time password (logged once to server
+    //      console so a local dev can log in, then rotated by the owner)
+    const email = process.env.ADMIN_EMAIL || 'admin@autoapply.ai';
+    const password = process.env.ADMIN_PASSWORD || ('seed_' + crypto.randomBytes(12).toString('base64url'));
     const saltAdmin = crypto.randomBytes(16).toString('hex');
-    const hashAdmin = crypto.pbkdf2Sync('admin123', saltAdmin, 1000, 64, 'sha512').toString('hex');
+    const hashAdmin = crypto.pbkdf2Sync(password, saltAdmin, 1000, 64, 'sha512').toString('hex');
+    if (!process.env.ADMIN_PASSWORD) {
+      console.warn('[seed] admin credential generated at random (set ADMIN_EMAIL/ADMIN_PASSWORD to control it):', email, password);
+    }
     return {
       id: 'usr_admin',
-      email: 'admin@autoapply.ai',
+      email,
       name: 'Admin Supervisor',
       passwordHash: hashAdmin,
       salt: saltAdmin,
@@ -758,6 +782,10 @@ class DatabaseService {
   }
 
   addResume(resume: ResumeDocument): ResumeDocument {
+    // A candidate has ONE active resume: uploading a new CV replaces the
+    // previous one (profile, skills and preferences were already merged on
+    // upload — the document trail stays singular and unambiguous).
+    this.data.resumes = this.data.resumes.filter((r) => r.userId !== resume.userId);
     this.data.resumes.unshift(resume);
     this.persist();
     return resume;

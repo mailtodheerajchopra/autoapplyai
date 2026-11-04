@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { filterConflictJobs, filterStaleJobs, excludedEmployers, adaptPoolJobsForUser, poolKeyOf, filterLocationJobs } from '../server/discovery.js';
+import { filterConflictJobs, filterStaleJobs, excludedEmployers, adaptPoolJobsForUser, poolKeyOf, filterLocationJobs, filterExperienceJobs, mergePoolJobs } from '../server/discovery.js';
 import type { CandidateProfile } from '../server/types.js';
 
 const mkProfile = (over: Partial<CandidateProfile> = {}): CandidateProfile => ({
@@ -77,6 +77,88 @@ describe('DiscoveryPool — shared fingerprint', () => {
     const c = poolKeyOf(mkProfile(), { keywords: ['devops'] });
     expect(a).not.toBe(b);
     expect(poolKeyOf(mkProfile(), {})).not.toBe(c);
+  });
+});
+
+describe('Incremental daily sweep — mergePoolJobs', () => {
+  const now = new Date().toISOString();
+  const job = (company: string, title: string, postedDaysAgo: number, jobFetchedAt?: string) => ({
+    company, title, postedDaysAgo, jobFetchedAt, matchScore: 90,
+  });
+
+  it('folds fresh postings INTO history without losing the old ones', () => {
+    const history = [job('Adobe', 'Staff SWE', 30, now)];
+    const fresh = [job('Salesforce', 'Full Stack Eng', 1)];
+    const merged = mergePoolJobs(history, fresh, now);
+    expect(merged).toHaveLength(2);
+    // sort order is posting age (asc): fresh wins the top slot
+    expect(merged.map((j) => j.company)).toEqual(['Salesforce', 'Adobe']);
+  });
+
+  it('a collision (same company+title) is replaced by the fresh copy', () => {
+    const history = [job('Adobe', 'Staff SWE', 30, now)];
+    const fresh = [job('  adobe ', 'Staff   SWE', 1)]; // case/space-insensitive key
+    const merged = mergePoolJobs(history, fresh, now);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].postedDaysAgo).toBe(1);
+    expect(merged[0].jobFetchedAt).toBe(now);
+  });
+
+  it('caps history at 60 postings, keeping the freshest', () => {
+    const history = Array.from({ length: 70 }, (_, i) => job(`Co${i}`, 'T', 40 - Math.floor(i / 2), now));
+    const merged = mergePoolJobs(history, [], now);
+    expect(merged).toHaveLength(60);
+    // the freshest half of the batch survived (ages 6..35), the aged tail is gone
+    expect(Math.max(...merged.map((j) => j.postedDaysAgo as number))).toBeLessThanOrEqual(35);
+    expect(Math.min(...merged.map((j) => j.postedDaysAgo as number))).toBe(6);
+  });
+
+  it('prunes postings that are effectively beyond 60 days old', () => {
+    const longAgo = new Date(Date.now() - 50 * 86_400_000).toISOString();
+    const history = [
+      job('Old Co', 'Aged Job', 20, longAgo),      // 50 + 20 = 70 days → pruned
+      job('New Co', 'Fresh Job', 30, now),          // 0 + 30 = 30 days → kept
+    ];
+    const merged = mergePoolJobs(history, [], now);
+    expect(merged.map((j) => j.company)).toEqual(['New Co']);
+  });
+});
+
+describe('Enforce 4 — experience-demand filter', () => {
+  const mkJob = (title: string, description: string) => ({ title, description, company: 'Co', postedDaysAgo: 2 });
+
+  it('hides postings demanding far more experience than the candidate has', () => {
+    const { kept, dropped } = filterExperienceJobs([mkJob('SWE', 'Requires 10+ years of experience.')], 3);
+    expect(kept).toHaveLength(0);
+    expect(dropped).toBe(1);
+  });
+
+  it('keeps postings within a 2-year tolerance', () => {
+    const { kept } = filterExperienceJobs([mkJob('SWE', 'Requires 5+ years of experience.')], 3);
+    expect(kept).toHaveLength(1);
+  });
+
+  it('hides internships for established professionals', () => {
+    const { kept, dropped } = filterExperienceJobs(
+      [mkJob('Engineering Intern', 'Great learning opportunity!')],
+      5,
+    );
+    expect(kept).toHaveLength(0);
+    expect(dropped).toBe(1);
+  });
+
+  it('hides seniority titles above the candidate (Staff/Principal/Director)', () => {
+    const { dropped } = filterExperienceJobs(
+      [mkJob('Staff Engineer', 'Build things.'), mkJob('Principal Engineer', 'Build things.'), mkJob('Director of Engineering', 'Lead things.')],
+      2,
+    );
+    expect(dropped).toBe(3);
+  });
+
+  it('keeps ordinary postings with no experience signal', () => {
+    const { kept, dropped } = filterExperienceJobs([mkJob('Full Stack Developer', 'Build React and Node apps.')], 1);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toBe(0);
   });
 });
 

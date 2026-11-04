@@ -120,6 +120,7 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
                   <th className="py-3 px-4">Role & Company</th>
                   <th className="py-3 px-4">Portal / Source</th>
                   <th className="py-3 px-4">Match %</th>
+                  <th className="py-3 px-4">Applied Date</th>
                   <th className="py-3 px-4">Current Status</th>
                   <th className="py-3 px-4">Proof / Receipt</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -152,6 +153,18 @@ export const ApplicationTrackerView: React.FC<ApplicationTrackerViewProps> = ({
                         <span className="font-mono font-bold text-emerald-400 tabular-nums">
                           {job.matchScore}%
                         </span>
+                      </td>
+
+                      <td className="py-3.5 px-4 text-[11px]">
+                        {app?.submissionAudit?.submittedAt ? (
+                          <span className="text-slate-200 font-mono tabular-nums">
+                            {new Date(app.submissionAudit.submittedAt!).toLocaleDateString()}
+                          </span>
+                        ) : (
+                          <span className={isSubmitted ? 'text-amber-400 italic' : 'text-slate-500 italic'}>
+                            {isSubmitted ? 'date missing' : 'Not applied yet'}
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4">
