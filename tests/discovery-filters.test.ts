@@ -198,12 +198,38 @@ describe('Enforce 3 — STRICT preferred-location filter', () => {
     expect(kept).toHaveLength(0);
   });
 
-  it('always keeps explicitly Remote postings', () => {
+  it('keeps country-agnostic Remote postings for any profile', () => {
     const { kept } = filterLocationJobs(
-      [mkJob('San Francisco, CA', 'Remote'), mkJob('Austin, TX', 'Remote')],
+      [mkJob('Remote', 'Remote'), mkJob('Remote - Global', 'Remote')],
       'Bengaluru, India',
     );
     expect(kept).toHaveLength(2);
+  });
+
+  it('drops remote postings that name a different country ("Remote, US") for an India candidate', () => {
+    const { kept, dropped } = filterLocationJobs(
+      [mkJob('Remote, US', 'Remote'), mkJob('Remote - US', 'Remote'), mkJob('Remote, India', 'Remote')],
+      'Bengaluru, India',
+    );
+    expect(kept.map((j) => j.location)).toEqual(['Remote, India']);
+    expect(dropped).toBe(2);
+  });
+
+  it('an explicit target location rescues a country-named remote posting', () => {
+    const { kept } = filterLocationJobs(
+      [mkJob('Remote, US', 'Remote')],
+      'Bengaluru, India',
+      ['US', 'Remote'],
+    );
+    expect(kept).toHaveLength(1);
+  });
+
+  it('never over-filters remote postings when the profile country is unknown', () => {
+    const { kept } = filterLocationJobs(
+      [mkJob('Remote, US', 'Remote')],
+      '',
+    );
+    expect(kept).toHaveLength(1);
   });
 
   it('keeps on-site postings in the candidate\'s own country (cross-state OK in US)', () => {

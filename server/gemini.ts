@@ -366,11 +366,17 @@ export async function discoverJobsWithAgent(
   const allSkills = profile.skills.flatMap(s => s.items).concat(profile.primarySkills);
   const excludedList = Array.from(new Set([profile.currentEmployer, ...(profile.excludedEmployers || [])].filter(Boolean)));
   
+  const marketLocation = (searchOptions.location || profile.location || '').trim();
+  // A bare "Remote"/"Anywhere" carries no country signal — treat it as
+  // unspecified so the prompt never silently defaults to one market.
+  const marketUnspecified = !marketLocation || /^(remote|anywhere|any)$/i.test(marketLocation);
+  const isIndiaMarket = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(marketLocation);
+
   const prompt = `Candidate Profile:
 - Target Roles: ${profile.targetRoles.join(", ") || "Software Engineer, Full Stack Developer"}
 - Key Skills: ${allSkills.slice(0, 25).join(", ")}
 - Years of Experience: ${profile.yearsOfExperience}
-- Location: ${searchOptions.location || profile.location || "United States / Remote"}
+- Location: ${marketUnspecified ? "Not specified (global / Remote)" : marketLocation}
 - Remote Preference: ${searchOptions.remoteOnly ? "Strictly Remote" : profile.workdayPreferences.preferredWorkType}
 - Target Platforms: ${(searchOptions.sources && searchOptions.sources.length > 0) ? searchOptions.sources.join(", ") : "LinkedIn, Naukri, Workday Portal, Indeed"}
 - Search Keywords: ${(searchOptions.keywords && searchOptions.keywords.length > 0) ? searchOptions.keywords.join(", ") : profile.targetRoles.join(", ")}
@@ -380,13 +386,14 @@ STRICT CANDIDATE SAFETY FILTERS:
    Candidate's current / last employer is: "${profile.currentEmployer || 'None declared'}".
    Candidate's excluded employers list: [${excludedList.join(', ')}].
    NEVER return or apply to jobs at these excluded companies under any circumstance.
-2. GEOGRAPHIC RELEVANCE (candidate's market):   The candidate's market is: "${(searchOptions.location || profile.location || '').trim() || 'not specified'}".${/india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(searchOptions.location || profile.location || '') ? `
-   This is an INDIA-based candidate: AT LEAST 4 of the 6 openings must be located in India (Bangalore, Hyderabad, Pune, Gurgaon/Noida, Mumbai, Chennai, or India-Remote) — surface them as seen on Naukri, LinkedIn India, and Indian enterprises (Infosys, TCS, Wipro, Cognizant, Accenture India, Flipkart, Zoho, Razorpay, Swiggy, Paytm, or MNC India offices). A US posting is acceptable ONLY when it is fully Remote.` : `
+2. GEOGRAPHIC RELEVANCE (candidate's market):   The candidate's market is: ${marketUnspecified ? 'not specified' : `"${marketLocation}"`}.${isIndiaMarket ? `
+   This is an INDIA-based candidate: AT LEAST 4 of the 6 openings must be located in India (Bangalore, Hyderabad, Pune, Gurgaon/Noida, Mumbai, Chennai, or India-Remote) — surface them as seen on Naukri, LinkedIn India, and Indian enterprises (Infosys, TCS, Wipro, Cognizant, Accenture India, Flipkart, Zoho, Razorpay, Swiggy, Paytm, or MNC India offices). A US posting is acceptable ONLY when it is fully Remote.` : marketUnspecified ? `
+   No home country is known for this candidate. Return a GEOGRAPHICALLY DIVERSE mix across the 6 openings — do NOT default to any single country: blend India (Bangalore, Hyderabad, Pune — e.g. Infosys, Zoho, Razorpay), US-Remote, EU-Remote, and genuinely location-agnostic Remote roles.` : `
    Prefer openings physically located in (or Remote-eligible for) the candidate's market. Cross-country on-site postings are undesirable — the serve-time location filter will drop them.`}
 3. JOB POSTING FRESHNESS:
    Strict requirement: ONLY return jobs posted within the last 45 days (between 1 and 45 days ago). Completely discard any job postings older than 45 days. Set postedDaysAgo to an integer between 1 and 45.${searchOptions.recencyWindowDays ? `\n   INCREMENTAL SWEEP MODE: this is a daily refresh scan. ONLY return jobs posted within the last ${searchOptions.recencyWindowDays} day(s) — postedDaysAgo must be between 1 and ${searchOptions.recencyWindowDays}. Do NOT repeat well-known older postings; surface ONLY fresh announcements from today/yesterday.` : ''}
 
-Generate 6 realistic, highly relevant job openings actively hiring in tech companies (including major enterprises using Workday like Adobe, Salesforce, Cisco, Netflix, Visa, Walmart, as well as listings seen on LinkedIn and Naukri).
+Generate 6 realistic, highly relevant job openings actively hiring in tech companies (including major enterprises using Workday like Adobe, Salesforce, Cisco, Netflix, Visa, Walmart, Indian enterprises like Infosys, TCS, Zoho, Razorpay, Swiggy, and listings seen on LinkedIn and Naukri — weight the mix toward the candidate's market per the geographic rule above).
 For each job, provide realistic job descriptions, exact required skills, portal type (specify 'workday' for enterprise company career sites, or 'greenhouse' / 'lever' / 'direct'), calculate an objective matchScore (0-100), identify matching skills, missing skills, postedDaysAgo (1-45), and provide a 1-sentence fit rationale.`;
 
   try {

@@ -114,11 +114,18 @@ export function filterLocationJobs<T extends { location?: string; remoteType?: s
   let dropped = 0;
   const kept = jobs.filter((j) => {
     const isRemote = (j.remoteType || '').toLowerCase() === 'remote';
+    const loc = (j.location || '').toLowerCase();
+    // A remote posting that still NAMES a country ("Remote, US", "Remote - US")
+    // is effectively that country's on-site payroll — a different-country
+    // candidate cannot take it, so it is dropped like an on-site posting…
+    const remoteCountry = isRemote ? countryOf(j.location || '') : '';
     let compatible: boolean;
-    if (isRemote) {
+    if (isRemote && remoteCountry && profileCountry && remoteCountry !== profileCountry) {
+      // …unless the user explicitly targeted that country.
+      compatible = targets.some((t) => t && loc.includes(t));
+    } else if (isRemote) {
       compatible = true;
     } else if (targets.length) {
-      const loc = (j.location || '').toLowerCase();
       compatible = targets.some((t) => loc.includes(t));
       if (!compatible && profileCountry && countryOf(j.location || '') === profileCountry) compatible = true;
     } else if (profileCountry) {

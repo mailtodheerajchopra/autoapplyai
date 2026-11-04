@@ -293,6 +293,19 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
             The agent continuously aggregates positions matching your parsed resume skills, creates portal applicant accounts, solves Workday questionnaires with transparent reasoning, and stages everything for your final review.
           </p>
 
+          {/* Location nudge: without a profile location the agent can't tell
+              which market to target, so prompt it before the first run. */}
+          {!profile?.location && (
+            <div className="p-3 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200 flex items-start gap-2">
+              <MapPin className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+              <span>
+                <span className="font-semibold">Set your location in your profile</span> so the agent targets your market —
+                without it, results skew to whatever country the portals surface first. Edit it under Profile → Current
+                Location (e.g. &quot;Bengaluru, India&quot;), then run the agent.
+              </span>
+            </div>
+          )}
+
           {/* Quick Agent Configuration Controls */}
           <div className="pt-2 flex flex-col sm:flex-row gap-3">
             <div className="flex-1 relative">

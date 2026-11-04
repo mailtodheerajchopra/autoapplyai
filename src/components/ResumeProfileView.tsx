@@ -675,13 +675,19 @@ Principal DevOps & Cloud Infrastructure Engineer with 9+ years experience archit
               />
             </div>
             <div className="space-y-1">
-              <label className="text-slate-400">Current Location</label>
+              <label className="text-slate-300 font-medium">
+                Current Location <span className="text-amber-400">*</span>
+              </label>
               <input
                 type="text"
                 value={formData.location}
                 onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                className="w-full h-9 rounded-lg bg-slate-950 border border-slate-800 px-3 text-slate-200 focus:outline-none"
+                placeholder="e.g. Bengaluru, India"
+                className={`w-full h-9 rounded-lg bg-slate-950 border px-3 text-slate-200 focus:outline-none ${!formData.location ? 'border-amber-600/60' : 'border-slate-800'}`}
               />
+              <p className="text-[11px] text-slate-500">
+                Powers job targeting — the agent finds openings in your market and hides cross-country on-site roles.
+              </p>
             </div>
           </div>
 

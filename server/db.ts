@@ -26,6 +26,11 @@ export interface DatabaseSchema {
   discoveryPool: DiscoveryPoolEntry[];
 }
 
+/** Dedupe identity for a discovered job posting within a user's feed. */
+function jobKey(j: Pick<JobPosting, 'userId' | 'company' | 'title'>): string {
+  return `${j.userId}|${(j.company || '').trim().toLowerCase()}|${(j.title || '').trim().toLowerCase()}`;
+}
+
 class DatabaseService {
   private data: DatabaseSchema;
   private saveTimeout: NodeJS.Timeout | null = null;
@@ -72,6 +77,21 @@ class DatabaseService {
           missingSkills: Array.isArray(j.missingSkills) ? j.missingSkills : [],
           description: j.description ?? '',
         }));
+        // One-time dedupe of historical feed rows: pool-serve used to re-add
+        // the same (userId, company, title) posting on every serve. Jobs are
+        // stored newest-first, so keeping the first occurrence keeps the
+        // newest copy. One pass at boot, then addJobs() keeps it that way.
+        const seenKeys = new Set<string>();
+        const beforeDedupe = stored.jobs.length;
+        stored.jobs = stored.jobs.filter((j: any) => {
+          const k = jobKey(j);
+          if (seenKeys.has(k)) return false;
+          seenKeys.add(k);
+          return true;
+        });
+        if (stored.jobs.length !== beforeDedupe) {
+          console.log(`[db] Deduped job feed: removed ${beforeDedupe - stored.jobs.length} duplicate rows`);
+        }
         if (!Array.isArray(stored.jobs)) stored.jobs = [];
         if (!Array.isArray(stored.profiles)) stored.profiles = [];
         if (!Array.isArray(stored.resumes)) stored.resumes = [];
@@ -820,7 +840,19 @@ class DatabaseService {
   }
 
   addJobs(jobs: JobPosting[]): void {
-    this.data.jobs.unshift(...jobs);
+    // Dedupe on (userId, company, title): the pool-serve path re-adds jobs on
+    // every serve, so without this a user's feed accumulates 7 copies of the
+    // same 6 openings. First occurrence in an incoming batch wins; a job that
+    // already exists in the feed is skipped entirely (history is preserved).
+    const seen = new Set<string>();
+    const fresh: JobPosting[] = [];
+    for (const job of jobs) {
+      const key = jobKey(job);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (!this.data.jobs.some((j) => jobKey(j) === key)) fresh.push(job);
+    }
+    this.data.jobs.unshift(...fresh);
     this.persist();
   }
 
