@@ -2,6 +2,9 @@
 
 > **Live: [https://www.applymatica.com](https://www.applymatica.com)** — production on Vercel (Hobby, $0/mo).
 
+![Discovery onboarding — CV gate before the agent activates](docs/screenshots/discovery-onboarding.jpg)
+
+
 ## The problem it solves
 
 Job hunting fails in boring, mechanical ways:
@@ -31,7 +34,7 @@ AutoApply AI is a production-grade agent platform that:
 ### 2. Candidate-safety filter chain (server-enforced, tested)
 - **Conflict shield** — your current/last employer and explicit blocklist can never surface.
 - **45-day freshness** — postings age per-job with their own fetch timestamp; calendar-rotten entries never render.
-- **Location rule** — country inference incl. `City, ST` state-suffix heuristics; cross-country on-site is blocked, Remote is always kept.
+- **Location rule** — country inference incl. `City, ST` state-suffix heuristics; cross-country on-site is blocked, Remote is always kept. A per-user **Location filter** in the feed lets candidates slice mixed historical feeds by country.
 - **Experience rule** — `N+ years` demands beyond a +2-year tolerance and seniority-titled roles (Staff/Principal/Director/internships) are hidden, never applied to.
 - **Match floor** — optional minimum relevance score.
 
@@ -68,15 +71,15 @@ AutoApply AI is a production-grade agent platform that:
  └── Cron        (daily discovery sweep; recency-window prompt)
         │                │
         ▼                ▼
- Gemini 3.8-flash → 3.5-flash → mock     Supabase JSONB snapshot
- (timeout-bounded degradation chain)     (atomic read-modify-write,
-                                          3-attempt retry, RLS on)
+ Gemini 3.8-flash → 3.5-flash → Groq/Llama-3.3 → mock     Supabase JSONB snapshot
+ (timeout-bounded degradation chain)                    (atomic read-modify-write,
+                                                          3-attempt retry, RLS on)
 ```
 
 - **Async design:** `POST /agent/discover` returns `202 + jobId in <300ms`; the model call runs in the background and the client polls — with *stale-job rescue* so a serverless eviction can never strand a run.
-- **Model degradation chain:** primary 12s → secondary 30s → mock fallback. 429/503 degrade silently; the product keeps working at zero quota.
+- **Model degradation chain:** primary 12s → secondary 30s → Groq 30s → mock fallback. 429/503 degrade silently; the product keeps working at zero quota.
 
-| Tests | Vitest + Supertest — **45 tests** (auth lockdown, filter chain, moderation, async pipeline, pool merge, storage round-trip) |
+| Tests | Vitest + Supertest — **53 tests** (auth lockdown, filter chain, moderation, async pipeline, pool merge, storage round-trip) |
 | Load | k6 — kickoff p95 ≈ 300 ms under concurrency, 0 errors |
 | Cost | $0 — Hobby plan, free Gemini tier amortized by the shared pool, free Supabase tier |
 
@@ -126,7 +129,7 @@ cd autoapplyai
 npm install
 cp .env.example .env        # fill in GEMINI_API_KEY, AUTH_SECRET, Supabase keys
 npm run dev                 # full-stack dev server at http://localhost:3000
-npm run test                # 45 tests
+npm run test                # 53 tests
 ```
 
 With no env config the app still boots in degraded mode (mock agent paths) — good for UI work.
@@ -140,6 +143,14 @@ With no env config the app still boots in degraded mode (mock agent paths) — g
 
 ---
 
+## Community
+
+- **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md): dev setup, coding style, and the pull-request process.
+- **Code of Conduct** — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): the community standard for interactions.
+- **Security** — [SECURITY.md](SECURITY.md): responsible disclosure (please don't open public issues for vulnerabilities).
+
+---
+
 ## License
 
-Apache-2.0
+Apache-2.0 — see [LICENSE](LICENSE).
