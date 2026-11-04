@@ -809,8 +809,9 @@ class DatabaseService {
     const salt = crypto.randomBytes(16).toString('hex');
     user.salt = salt;
     user.passwordHash = crypto.pbkdf2Sync(newPlain, salt, 1000, 64, 'sha512').toString('hex');
-    this.persist();
-    void this.saveNow();
+    // Auth-critical write: the /auth/change-password route awaits flush() so
+    // the new credential is durable before the client is told it succeeded —
+    // an evictable password change is a lockout waiting to happen.
     return { ok: true };
   }
 

@@ -123,6 +123,13 @@ export const api = {
     return fetchWithAuth('/api/auth/me');
   },
 
+  async changePassword(currentPassword: string, newPassword: string): Promise<{ success: boolean; persisted?: boolean }> {
+    return fetchWithAuth('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+  },
+
   logout(): void {
     setStoredToken(null);
   },

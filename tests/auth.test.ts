@@ -57,3 +57,57 @@ describe('stateless auth (HMAC tokens)', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('self-service password change', () => {
+  const app = createApp();
+
+  it('registers, changes password, and re-authenticates with the new secret', async () => {
+    const email = `pw-change-${Date.now()}@test.dev`;
+    const reg = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'Pw Changer', email, password: 'old-secret-1' });
+    expect(reg.status).toBe(201);
+    expect(reg.body.persisted).toBe(true);
+
+    // Wrong current password is rejected.
+    const wrong = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .send({ currentPassword: 'not-the-password', newPassword: 'new-secret-1' });
+    expect(wrong.status).toBe(400);
+
+    // Correct change succeeds and is durable before responding.
+    const ok = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${reg.body.token}`)
+      .send({ currentPassword: 'old-secret-1', newPassword: 'new-secret-1' });
+    expect(ok.status).toBe(200);
+    expect(ok.body.success).toBe(true);
+    expect(ok.body.persisted).toBe(true);
+
+    // The old secret no longer authenticates; the new one does.
+    const oldLogin = await request(app).post('/api/auth/login').send({ email, password: 'old-secret-1' });
+    expect(oldLogin.status).toBe(401);
+    const newLogin = await request(app).post('/api/auth/login').send({ email, password: 'new-secret-1' });
+    expect(newLogin.status).toBe(200);
+  });
+
+  it('requires both current and new password', async () => {
+    const token = generateToken('usr_alex_chen');
+    const missing = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'x' });
+    expect(missing.status).toBe(400);
+  });
+
+  it('rejects a new password shorter than 6 characters', async () => {
+    const token = generateToken('usr_alex_chen');
+    const res = await request(app)
+      .post('/api/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'password123', newPassword: 'abc' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/at least 6/i);
+  });
+});

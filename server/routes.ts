@@ -294,13 +294,23 @@ apiRouter.get('/auth/google/callback', async (req: Request, res: Response) => {
   }
 });
 
-apiRouter.post('/auth/change-password', authMiddleware, (req: Request, res: Response) => {  const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword?: string };
+apiRouter.post('/auth/change-password', authMiddleware, async (req: Request, res: Response) => {
+  const { currentPassword, newPassword } = req.body as { currentPassword?: string; newPassword?: string };
   if (!currentPassword || !newPassword) {
     res.status(400).json({ error: 'Current and new password are required' });
     return;
   }
   const result = db.changeUserPassword(req.user!.id, currentPassword, newPassword);
-  res.status(result.ok ? 200 : 400).json(result.ok ? { success: true } : { error: result.error });
+  if (!result.ok) {
+    res.status(400).json({ error: result.error });
+    return;
+  }
+  // Auth-critical write: flush durably before responding (mirrors registration).
+  const persisted = await db.flush();
+  if (!persisted) {
+    console.error(`[auth] password change for ${req.user!.email} may not be durable!`);
+  }
+  res.json({ success: true, persisted });
 });
 
 apiRouter.post('/auth/update-role', authMiddleware, (req: Request, res: Response) => {  // Admin-only: a candidate must never be able to promote themselves here.

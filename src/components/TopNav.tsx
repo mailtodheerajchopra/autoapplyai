@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Briefcase, UserCheck, ShieldCheck, ChevronDown, LogOut, RefreshCw, Shield, Sparkles, User, ExternalLink } from 'lucide-react';
+import { ChangePasswordModal } from './ChangePasswordModal';
+import { Briefcase, UserCheck, ShieldCheck, ChevronDown, LogOut, RefreshCw, Shield, Sparkles, User, ExternalLink, KeyRound } from 'lucide-react';
 
 interface TopNavProps {
   activeTab: string;
@@ -21,6 +22,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   const { user, demoPersonas, switchUser, logout, activePortal, setActivePortal } = useAuth();
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [showSandboxPersonas, setShowSandboxPersonas] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   const candidateNavItems = [
     { id: 'jobs', label: 'Discovered Jobs' },
@@ -33,7 +35,8 @@ export const TopNav: React.FC<TopNavProps> = ({
   ];
 
   return (
-    <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
+    <>
+      <header className="sticky top-0 z-40 bg-slate-950/90 backdrop-blur-md border-b border-slate-800">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between gap-6 h-16">
           {/* Zone 1: Brand Wordmark & Mode Badge */}
@@ -216,16 +219,29 @@ export const TopNav: React.FC<TopNavProps> = ({
                       </div>
                     )}
 
-                    <div className="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between px-2">
-                      <button
-                        onClick={() => {
-                          setUserDropdownOpen(false);
-                          onOpenAuth();
-                        }}
-                        className="text-indigo-400 hover:text-indigo-300 transition-colors font-medium text-[11px]"
-                      >
-                        + Register New Account
-                      </button>
+                    <div className="mt-2 pt-2 border-t border-slate-800 px-2 space-y-2">
+                      {user && (
+                        <button
+                          onClick={() => {
+                            setUserDropdownOpen(false);
+                            setShowChangePassword(true);
+                          }}
+                          className="w-full flex items-center gap-1.5 text-slate-300 hover:text-white transition-colors text-[11px] font-medium"
+                        >
+                          <KeyRound className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Change Password</span>
+                        </button>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <button
+                          onClick={() => {
+                            setUserDropdownOpen(false);
+                            onOpenAuth();
+                          }}
+                          className="text-indigo-400 hover:text-indigo-300 transition-colors font-medium text-[11px]"
+                        >
+                          + Register New Account
+                        </button>
                       <button
                         onClick={() => {
                           setUserDropdownOpen(false);
@@ -236,6 +252,7 @@ export const TopNav: React.FC<TopNavProps> = ({
                         <LogOut className="w-3 h-3" />
                         <span>Sign Out</span>
                       </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -252,5 +269,12 @@ export const TopNav: React.FC<TopNavProps> = ({
         </div>
       </div>
     </header>
+      {user && (
+        <ChangePasswordModal
+          isOpen={showChangePassword}
+          onClose={() => setShowChangePassword(false)}
+        />
+      )}
+    </>
   );
 };
