@@ -1,163 +1,144 @@
-# AutoApply AI - Autonomous Job Discovery & Workday Auto-Fill Agent
+# ApplyMatica (AutoApply AI) — Autonomous Job Discovery & Workday Auto-Fill Agent
 
-> **Production-grade AI agent platform that autonomously monitors job openings across LinkedIn, Naukri, and Workday portals, extracts candidate skills from resumes (PDF, DOCX, MD, TXT), provisions employer portal accounts, solves ATS questionnaires with transparent AI reasoning, and presents everything in a staging dashboard for Human-in-the-Loop review and one-click final submission.**
+> **Live: [https://www.applymatica.com](https://www.applymatica.com)** — production on Vercel (Hobby, $0/mo).
 
----
+## The problem it solves
 
-## 🌟 Key Capabilities
+Job hunting fails in boring, mechanical ways:
 
-### 1. 🛡️ Conflict-of-Interest & Current Employer Shield
-- **Last/Current Employer Blacklist**: AutoApply AI automatically detects your current/last employer from your resume and profile (e.g. `HyperScale Cloud Tech`) and places it on a strict blocklist.
-- **Interception Guarantee**: The discovery agent and Workday autofill engine are forbidden from applying to current or blacklisted past employers. Any attempt triggers an immediate security alert and audit block.
+1. **Discovery is manual and repetitive.** You re-search the same portals every day; fresh postings are buried under week-old listings you've already seen.
+2. **Every company's Workday/ATS portal makes you re-type the same answers** — profile, education, work authorization, questionnaire, cover letter — for every single posting.
+3. **Real risk of self-sabotage:** applying to your own current employer, or to roles that demand 10 years of experience when you have 3.
+4. **Quota reality of AI tools:** naive "ask the LLM to find jobs per user per click" designs burn model quota instantly and fall over on the free tier.
 
-### 2. ⏳ Strict 45-Day Job Posting Freshness Policy
-- **Stale Listing Rejection**: Automatically evaluates original posting timestamps and strictly discards any openings older than **45 days** (`postedDaysAgo > 45`).
-- **Freshness Transparency**: Every job card clearly displays its posting age (e.g., `Posted 4d ago (Freshness <= 45d verified)`).
+AutoApply AI is a production-grade agent platform that:
 
-### 3. 🔑 Workday Credential Vault & Same-Credential Position Tracking
-- **Multi-Position Credential Reuse**: When applying to multiple openings at the same company (e.g., Salesforce, Adobe), AutoApply AI checks the **Credential Vault** and reuses your existing applicant account.
-- **Live Status Tracking**: Track your application status over time (`Application Received` &rarr; `Under Recruiter Review` &rarr; `Screening Scheduled` &rarr; `Interview Scheduled`) via your saved credentials.
-- **Full History**: View timestamped status transition logs for each employer portal.
-
-### 4. 📊 Relevance & Matching Diagnostics ("How do I know it's bringing the right jobs?")
-- **Explainable Skill Match Matrix**: Inspect exact skill overlap percentages, matching technical competencies, and missing skills for every discovered job.
-- **Relevance Scoreboard**: Visual diagnostic metrics on average match score, top matched technologies across openings, and precision verification.
-- **Live Diagnostic Prober**: Interactive diagnostics explaining why each opening was selected and why stale/conflict jobs were rejected.
-
-### 5. 📜 Comprehensive Audit Trail & Event Logging
-- **Immutable System Audit Trail**: Complete event history logging security checks, stale job exclusions, account provisioning, questionnaire reasoning, human review approvals, and portal dispatch timestamps.
-- **Exportable Records**: Export full audit logs in JSON/CSV format for verification and record-keeping.
-
-### 5. 🔒 Strict Multi-User Authentication & Session Isolation
-- **No Mixed Sessions**: Cryptographic 32-byte bearer tokens isolate session memory.
-- **Row-Level Tenant Security**: Every database lookup enforces `userId === req.user.id`. User A cannot access, query, or mutate User B's profile, resumes, or applications.
-- **PBKDF2 Password Hashing**: Passwords stored with individual 16-byte cryptographic salts and 1,000 SHA-512 iterations.
-- **Pre-Loaded Test Accounts**: Switch instantly between **Alex Chen** (Senior Full-Stack Engineer) and **Priya Sharma** (Cloud & DevOps Architect) to verify zero data bleed between sessions.
+- **Discovers relevant openings** across LinkedIn, Naukri, and Workday portals and **remembers history** — the first scan covers a full 45-day window, then a daily cron sweep asks the model *only for postings from the last ~2 days* and merges them into the historical pool. Every next-day search costs almost nothing.
+- **Extracts skills from your resume** (PDF/DOCX/MD/TXT via multimodal parsing) — without ever showing or leaking your CV keywords in the UI; they're applied server-side.
+- **Pre-fills Workday applications and reasons through ATS questionnaires** with transparent step-by-step logging, then holds everything at a **Human Review Gate** — nothing is ever auto-submitted.
+- **Enforces candidate-safety rules** before anything reaches you: current/past-employer conflict shield, strict 45-day freshness, location policy (an India candidate never sees US on-site roles — Remote always allowed), and an experience-demand rule ("N+ years" parsing + seniority-title heuristics).
+- **Tracks every submitted application** with an applied-date, Workday confirmation code, and a timestamped status history — per candidate, fully isolated.
 
 ---
 
-## 🏗️ System Architecture
+## Key capabilities
+
+### 1. Shared DiscoveryPool + incremental daily sweeps
+- One market scan per **(skills fingerprint + filters)** is stored as a shared pool — 10 users with the same profile = **1 AI call instead of 10**.
+- Per-user rules are applied **at serve time**, never stored, so the pool stays user-agnostic.
+- The cron sweeper (Vercel Cron, guarded by a `CRON_SECRET` bearer) refreshes the most-requested markets with a **recency-window prompt** and folds results into history with dedupe, a 60-posting cap, and a 61-day prune.
+
+### 2. Candidate-safety filter chain (server-enforced, tested)
+- **Conflict shield** — your current/last employer and explicit blocklist can never surface.
+- **45-day freshness** — postings age per-job with their own fetch timestamp; calendar-rotten entries never render.
+- **Location rule** — country inference incl. `City, ST` state-suffix heuristics; cross-country on-site is blocked, Remote is always kept.
+- **Experience rule** — `N+ years` demands beyond a +2-year tolerance and seniority-titled roles (Staff/Principal/Director/internships) are hidden, never applied to.
+- **Match floor** — optional minimum relevance score.
+
+### 3. Workday credential vault & status tracking
+- Applying to multiple openings at the same company **reuses your existing applicant account** (credential vault).
+- Full timestamped **status history** (`Application Received` → `Under Recruiter Review` → `Screening Scheduled` → …) plus a per-application **Applied Date** and confirmation-code receipt.
+
+### 4. Explainable matching
+- Skill-overlap matrix (matching/missing skills), 0–100 relevance score, and a fit rationale for **every** discovered posting — plus filters diagnostics showing exactly how many jobs each rule dropped.
+
+### 5. Sign-in with Google (optional) + strict auth
+- Google OAuth with CSRF-signed state (HMAC-SHA256, 10-min expiry) and **verified-email-only** account linking; passwordless candidate provisioning for new Gmail users.
+- HMAC bearer sessions, PBKDF2 password hashing with per-user salts, strict `userId`-scoped tenancy.
+
+### 6. Prompt-injection defense & moderation
+- A zero-cost **moderation gate** screens uploaded CVs (hidden/zero-width/bidi chars, injection vocabulary, payload blobs) and rejects hostile documents **before** any model call.
+- Every Gemini prompt carries an **UNTRUSTED-DATA rule**; all model inputs/outputs are sanitized (incl. deep-sanitized structured payloads and the shared pool).
+
+### 7. Immutable audit trail
+- Every security check, stale/conflict exclusion, account provisioning, questionnaire decision, human review approval, and portal dispatch is logged with timestamps; admin console supports export.
+
+---
+
+## Architecture
 
 ```
-                                  ┌─────────────────────────────┐
-                                  │       Client Browser        │
-                                  │  (React 19 + Tailwind v4)   │
-                                  └──────────────┬──────────────┘
-                                                 │ Authorization: Bearer <token>
-                                                 ▼
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│ Express Server (server.ts)                                                              │
-│                                                                                         │
-│  ┌───────────────────────┐   ┌───────────────────────┐   ┌───────────────────────────┐  │
-│  │  Auth & Session Layer │   │ Job Discovery Agent   │   │ Workday Autofill Engine   │  │
-│  │  (PBKDF2 + Salts)     │   │ (Multi-Portal Scraper)│   │ (Questionnaire Solver)    │  │
-│  └──────────┬────────────┘   └──────────┬────────────┘   └─────────────┬─────────────┘  │
-│             │                           │                              │                │
-│             ▼                           ▼                              ▼                │
-│  ┌───────────────────────────────────────────────────────────────────────────────────┐  │
-│  │ Gemini 3.8 Flash Engine (@google/genai SDK)                                       │  │
-│  │ - Multimodal Resume Extraction (PDF/DOCX/MD)                                      │  │
-│  │ - Real-Time Job Synthesis & Fit Rationale                                         │  │
-│  │ - Workday Questionnaire Reasoning & Custom Cover Letters                          │  │
-│  └───────────────────────────────────────────────────────────────────────────────────┘  │
-│                                                 │                                       │
-│                                                 ▼                                       │
-│  ┌───────────────────────────────────────────────────────────────────────────────────┐  │
-│  │ Isolated Database Service (server/db.ts)                                          │  │
-│  │ - Strict Tenant Partitioning (userId scoped)                                      │  │
-│  │ - High-Throughput In-Memory Caching + Atomic Non-Blocking Disk Flush              │  │
-│  │ - Zero-Cost Serverless Ready (Render Disk / Neon Postgres / Supabase)             │  │
-│  └───────────────────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────────────────┘
+ React 19 + Tailwind SPA
+        │ Authorization: Bearer <token>
+        ▼
+ Express API on Vercel Functions — single serverless entry (maxDuration=60)
+ ├── Auth        (PBKDF2 + salts, Google OAuth, adminGuard)
+ ├── Job Agent   (async 202 + poll; stale-job rescue on eviction; 202→poll keeps UI unblocked)
+ ├── Autofill    (Workday questionnaire reasoning → Human Review Gate)
+ └── Cron        (daily discovery sweep; recency-window prompt)
+        │                │
+        ▼                ▼
+ Gemini 3.8-flash → 3.5-flash → mock     Supabase JSONB snapshot
+ (timeout-bounded degradation chain)     (atomic read-modify-write,
+                                          3-attempt retry, RLS on)
 ```
 
----
+- **Async design:** `POST /agent/discover` returns `202 + jobId in <300ms`; the model call runs in the background and the client polls — with *stale-job rescue* so a serverless eviction can never strand a run.
+- **Model degradation chain:** primary 12s → secondary 30s → mock fallback. 429/503 degrade silently; the product keeps working at zero quota.
 
-## 🚀 Cost-Effective Free Deployment Guide
-
-### Option 1: Render (100% Free Web Service)
-
-Render provides a completely free tier with automatic Git deployments and full Express + Vite support:
-
-1. Create a free account at [render.com](https://render.com).
-2. Click **New + > Web Service** and select your GitHub repository.
-3. Configure the build parameters:
-   - **Environment**: `Node`
-   - **Build Command**: `npm run build`
-   - **Start Command**: `npm run start`
-   - **Plan**: `Free ($0/month)`
-4. Under **Environment Variables**, add:
-   ```env
-   GEMINI_API_KEY=your_gemini_api_key
-   NODE_ENV=production
-   PORT=3000
-   ```
-5. Click **Create Web Service**. Your app is live with free SSL!
-
-*(Optional: For persistent storage across restarts on Render, attach a 1 GB free Persistent Disk mounted to `/.data`)*.
+| Tests | Vitest + Supertest — **45 tests** (auth lockdown, filter chain, moderation, async pipeline, pool merge, storage round-trip) |
+| Load | k6 — kickoff p95 ≈ 300 ms under concurrency, 0 errors |
+| Cost | $0 — Hobby plan, free Gemini tier amortized by the shared pool, free Supabase tier |
 
 ---
 
-### Option 2: Vercel (Free Serverless Tier)
+## Deployment (Vercel — recommended, what this repo runs on)
 
 1. Import the repository into [vercel.com](https://vercel.com).
-2. The included `vercel.json` maps API routes to `@vercel/node` and static client files to the edge CDN.
-3. Add `GEMINI_API_KEY` in Project Settings > Environment Variables.
-4. Deploy!
+2. `vercel.json` maps API routes to the serverless entry and the SPA to the edge CDN, and registers the daily cron (`30 5 * * *`).
+3. Configure **all environment variables below** in Project Settings → Environment Variables (Production).
+4. Optionally add your custom domain (`A @ → 76.76.21.21` / `CNAME www → cname.vercel-dns.com` at your DNS provider).
+5. Deploy. First boot seeds a durable snapshot from the Supabase env vars.
+
+### Environment variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `SUPABASE_URL` | ✅ | Durable storage endpoint (project URL) |
+| `SUPABASE_SECRET_KEY` | ✅ | Storage service key — **server-side only, never ship to browser** |
+| `AUTH_SECRET` | ✅ | HMAC secret for bearer tokens / OAuth state (`node -e "console.log(require('crypto').randomBytes(36).toString('base64url'))"`) |
+| `GEMINI_API_KEY` | ✅ | Agent model calls (free-tier ready; degrades gracefully) |
+| `CRON_SECRET` | ✅ | Bearer guard for `/api/cron/discovery-sweep` (requests without it get 401/404) |
+| `ADMIN_EMAIL` | ✅* | Admin account email — see **Credential ownership** below |
+| `ADMIN_PASSWORD` | ✅* | Admin account password (strong & random) |
+| `APP_URL` | ⬜ | Self-referential links / callbacks |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | ⬜ | Enables "Sign in with Google" (button auto-appears; also list your redirect URI in Google Cloud console) |
+
+\* If `ADMIN_EMAIL`/`ADMIN_PASSWORD` are absent, the app generates a random admin password and logs it **once** to the server console — set the env vars before going public.
+
+### Credential ownership (why collaborators can't lock you out)
+
+- **No credential exists in the repository** — not in code, not in seed data. Cloning or forking the repo gives you a working app with no passwords at all.
+- The admin account is **derived from env on every boot**: `ADMIN_EMAIL`/`ADMIN_PASSWORD` override the stored record at cold start. Even if the stored database record were somehow modified (e.g. by a bad migration), your Vercel env values re-apply immediately on the next boot.
+- **Who can rotate what:**
+  - Repository collaborators can change **code** — they cannot affect your running deployment unless they also have write access to your Vercel project. Keep the Vercel project (and Supabase) under your **personal** account, with **2FA enabled**, and never add repo-side deploy hooks to the production project you don't control.
+  - User registrations can never escalate: the register endpoint always creates a `candidate`, even for emails containing "admin" (self-grant holes are closed and covered by tests).
+- Rotating a password = updating the env var in Vercel and redeploying. Nothing else.
 
 ---
 
-### Option 3: Free Database Services
-
-AutoApply AI's database layer (`server/db.ts`) can be connected to any free SQL provider:
-- **Neon Serverless PostgreSQL** (Free 0.5 GiB, auto-sleep, scale-to-zero)
-- **Supabase** (Free 500 MB Postgres database with instant REST)
-- **Local SQLite / JSON** ($0 cost, built-in, zero external dependencies)
-
----
-
-## ⚡ Concurrency & Scale Architecture
-
-To handle high traffic and concurrent discovery operations:
-1. **Stateless Authorization**: Tokens are verified in memory with zero database round-trips for authenticated requests.
-2. **Debounced Atomic Persistence**: Database state writes are debounced (150ms buffer) to eliminate disk I/O contention.
-3. **Async Queue Workers**: Multi-portal job discovery and resume parsing execute in non-blocking background threads, preventing HTTP event-loop lag.
-4. **Memory Indexed Lookups**: All active user datasets are cached in memory with $O(1)$ key lookups by `userId`.
-
----
-
-## 💻 Local Development Setup
+## Local development
 
 ```bash
-# 1. Clone repository
-git clone https://github.com/your-username/autoapply-ai.git
-cd autoapply-ai
-
-# 2. Install dependencies
+git clone https://github.com/mailtodheerajchopra/autoapplyai.git
+cd autoapplyai
 npm install
-
-# 3. Configure environment
-cp .env.example .env
-# Set GEMINI_API_KEY in .env
-
-# 4. Start full-stack dev server
-npm run dev
-
-# App runs at http://localhost:3000
+cp .env.example .env        # fill in GEMINI_API_KEY, AUTH_SECRET, Supabase keys
+npm run dev                 # full-stack dev server at http://localhost:3000
+npm run test                # 45 tests
 ```
 
----
+With no env config the app still boots in degraded mode (mock agent paths) — good for UI work.
 
-## 🧪 Verifying Multi-User Isolation
+## Verifying user isolation (no demo data)
 
-To confirm that candidate sessions never bleed:
-1. Open the app in your browser (defaults to **Alex Chen**, Senior Full-Stack Engineer).
-2. View his saved applications (Salesforce, Adobe, Netflix).
-3. Click the user badge in the top-right corner and select **Priya Sharma** (Principal DevOps Engineer).
-4. Notice that the entire dashboard immediately switches to Priya's unique data: Cloud infrastructure openings, Kubernetes resume skills, and distinct Workday applications.
-5. Create a brand new account via **New Account / Register** to see a completely blank, isolated tenant environment.
+1. Register a fresh account → you get a clean, empty candidate tenant.
+2. Upload your CV → the profile, skills, and targets are parsed from it (keywords stay private in the UI).
+3. Run your first search → results are yours alone; every lookup is `userId`-scoped server-side.
+4. A second account in the same browser sees none of the first user's jobs, resumes, or applications.
 
 ---
 
-## 📜 License
+## License
+
 Apache-2.0

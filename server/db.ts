@@ -80,6 +80,17 @@ class DatabaseService {
         stored.users.forEach((u: any) => {
           if (!u.role) u.role = 'candidate';
         });
+        // Opt-in demo personas: scrub legacy seed users from any stored
+        // snapshot unless explicitly enabled, so known sample passwords
+        // ("password123") can never authenticate on a production instance.
+        if (process.env.DEMO_MODE !== 'personas') {
+          const demoIds = new Set(['usr_alex_chen', 'usr_priya_sharma']);
+          const before = stored.users.length;
+          stored.users = stored.users.filter((u: any) => !demoIds.has(String(u.id)));
+          if (stored.users.length !== before) {
+            console.log('[seed] demo persona accounts scrubbed (DEMO_MODE not enabled)');
+          }
+        }
         if (!stored.users.some((u: any) => u.role === 'admin')) {
           stored.users.push(this.buildAdminUser());
         }
@@ -175,17 +186,9 @@ class DatabaseService {
       createdAt: new Date().toISOString(),
     };
 
-    const saltAdmin = crypto.randomBytes(16).toString('hex');
-    const hashAdmin = crypto.pbkdf2Sync('admin123', saltAdmin, 1000, 64, 'sha512').toString('hex');
-    const userAdmin: User = {
-      id: 'usr_admin',
-      email: 'admin@autoapply.ai',
-      name: 'Admin Supervisor',
-      passwordHash: hashAdmin,
-      salt: saltAdmin,
-      role: 'admin',
-      createdAt: new Date().toISOString(),
-    };
+    // Admin is built env-first (ADMIN_EMAIL/ADMIN_PASSWORD) with a random
+    // fallback — no usable credential is ever hardcoded in the repo.
+    const userAdmin = this.buildAdminUser();
 
     const profile1: CandidateProfile = {
       id: 'prof_alex_chen',
@@ -518,17 +521,23 @@ class DatabaseService {
       },
     ];
 
+    // Demo personas are SAMPLE DATA for showcasing multi-user isolation. They
+    // must never activate implicitly: opt-in via DEMO_MODE=personas. A default
+    // seed therefore contains ONLY the admin user — cleaner for open source,
+    // and no known "password123" account can ever exist on a fresh deploy.
+    const demoEnabled = process.env.DEMO_MODE === 'personas';
+
     const initialDb: DatabaseSchema = {
-      users: [user1, user2, userAdmin],
-      profiles: [profile1, profile2],
+      users: demoEnabled ? [user1, user2, userAdmin] : [userAdmin],
+      profiles: demoEnabled ? [profile1, profile2] : [],
       resumes: [],
-      jobs: [job1, job2, job3, job4],
-      applications: [app1],
-      accounts: [account1],
+      jobs: demoEnabled ? [job1, job2, job3, job4] : [],
+      applications: demoEnabled ? [app1] : [],
+      accounts: demoEnabled ? [account1] : [],
       systemAuditLogs: seedAudits,
       discoveryJobs: [],
       discoveryPool: [],
-      agentLogs: [
+      agentLogs: demoEnabled ? [
         {
           id: 'log_seed_1',
           userId: user1.id,
@@ -549,7 +558,7 @@ class DatabaseService {
             'FRESHNESS POLICY: Dropped 2 postings older than 45 days',
           ],
         },
-      ],
+      ] : [],
     };
 
     // The seeded snapshot is returned as the in-memory starting point;
