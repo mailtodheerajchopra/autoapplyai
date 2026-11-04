@@ -236,6 +236,18 @@ describe('Enforce 3 — STRICT preferred-location filter', () => {
     expect(dropped).toBe(2);
   });
 
+  it('a bare "Remote" target does not DROP the candidate\'s own-country hybrid jobs', () => {
+    // Regression: "Pune / Hybrid" has no country word and no "remote"
+    // substring — the old target-string match dropped it for a
+    // Remote-targeting India candidate.
+    const { kept } = filterLocationJobs(
+      [mkJob('Pune / Hybrid', 'Hybrid'), mkJob('Bangalore / Hybrid', 'Hybrid')],
+      'India',
+      ['Remote'],
+    );
+    expect(kept).toHaveLength(2);
+  });
+
   it('never over-filters remote postings when the profile country is unknown', () => {
     const { kept } = filterLocationJobs(
       [mkJob('Remote, US', 'Remote')],

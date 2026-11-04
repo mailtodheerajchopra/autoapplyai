@@ -111,25 +111,28 @@ export function filterLocationJobs<T extends { location?: string; remoteType?: s
 ): { kept: T[]; dropped: number } {
   const profileCountry = countryOf(profileLocation);
   const targets = targetLocations.filter(Boolean).map((t) => t.toLowerCase());
+  // Work-type tokens ("remote", "hybrid", …) are not places — matching them
+  // against location strings corrupts both branches: "San Francisco, CA /
+  // Remote" would rescue cross-country jobs, and "Pune / Hybrid" (no country
+  // word, no "remote" substring) would be wrongly dropped for a
+  // Remote-targeting candidate. Only country-named targets participate.
+  const countryTargets = targets.filter((t) => !/^(remote|anywhere|any|hybrid|on-?site)$/.test(t));
   let dropped = 0;
   const kept = jobs.filter((j) => {
     const isRemote = (j.remoteType || '').toLowerCase() === 'remote';
     const loc = (j.location || '').toLowerCase();
     // A remote posting that still NAMES a country ("Remote, US", "Remote - US")
     // is effectively that country's on-site payroll — a different-country
-    // candidate cannot take it, so it is dropped like an on-site posting…
+    // candidate cannot take it, so it is dropped like an on-site posting.
     const remoteCountry = isRemote ? countryOf(j.location || '') : '';
     let compatible: boolean;
     if (isRemote && remoteCountry && profileCountry && remoteCountry !== profileCountry) {
-      // …unless the user explicitly targeted that country. The bare token
-      // "remote" does NOT count — it's a work-type preference, and location
-      // strings like "San Francisco, CA / Remote" contain the word, which
-      // would otherwise rescue every cross-country posting.
-      compatible = targets.some((t) => !/^(remote|anywhere|any|hybrid|on-?site)$/.test(t) && loc.includes(t));
+      // …unless the user explicitly targeted that country.
+      compatible = countryTargets.some((t) => loc.includes(t));
     } else if (isRemote) {
       compatible = true;
-    } else if (targets.length) {
-      compatible = targets.some((t) => loc.includes(t));
+    } else if (countryTargets.length) {
+      compatible = countryTargets.some((t) => loc.includes(t));
       if (!compatible && profileCountry && countryOf(j.location || '') === profileCountry) compatible = true;
     } else if (profileCountry) {
       const jobCountry = countryOf(j.location || '');
@@ -229,8 +232,11 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
   await markStage(userId, jobId, 'running', 75, `Conflict shield: ${droppedConflictCount} blocked`);
 
   // Enforce 3: preferred-location guard (own country / targets / Remote).
+  // The kickoff's own location counts as a market signal when the parsed
+  // profile has none — an explicit "India" run must guard like an India
+  // profile even before the candidate saves their profile location.
   const { kept: locatedJobs, dropped: droppedLocationCount } = filterLocationJobs(
-    eligibleJobs, profile.location || '', profile.targetLocations || [],
+    eligibleJobs, profile.location || options.location || '', profile.targetLocations || [],
   );
   if (droppedLocationCount > 0) {
     await markStage(userId, jobId, 'running', 80, `Location policy: ${droppedLocationCount} beyond preferred region`);
@@ -570,8 +576,10 @@ export function adaptPoolJobsForUser(
   const droppedConflict = fresh.length - nonConflict.length;
 
   // Enforce 3: preferred-location (same country, target locations, or Remote).
+  // Same rule as the fresh path: the kickoff location is a market signal
+  // when the parsed profile has none.
   const { kept: located, dropped: droppedLocation } = filterLocationJobs(
-    nonConflict, profile.location || '', profile.targetLocations || [],
+    nonConflict, profile.location || options.location || '', profile.targetLocations || [],
   );
 
   // Enforce 4: experience demand vs the candidate's years.

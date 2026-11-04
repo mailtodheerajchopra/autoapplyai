@@ -499,7 +499,7 @@ For each job, provide realistic job descriptions, exact required skills, portal 
       }
     }
 
-    return { jobs: getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45), provider: `mock-fallback (Gemini quota/busy; ${groqNote})` };
+    return { jobs: getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45, searchOptions.location), provider: `mock-fallback (Gemini quota/busy; ${groqNote})` };
   }
 }
 
@@ -773,7 +773,7 @@ function extractFallbackResume(text: string): ResumeDocument['parsedProfile'] {
   };
 }
 
-function getFallbackDiscoveredJobs(profile: CandidateProfile, recencyCap = 45): Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>[] {
+function getFallbackDiscoveredJobs(profile: CandidateProfile, recencyCap = 45, locationHint = ''): Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>[] {
   const excluded = Array.from(new Set([profile.currentEmployer, ...(profile.excludedEmployers || [])].filter(Boolean)));
   
   const rawJobs = [
@@ -899,8 +899,11 @@ function getFallbackDiscoveredJobs(profile: CandidateProfile, recencyCap = 45): 
 
   // The mock tier obeys the same geo rules as the AI tiers: an India-market
   // candidate gets the India slice only — US canned entries would (correctly)
-  // be dropped by the serve-time filter anyway, so don't offer them.
-  const isIndiaMarket = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(profile.location || '');
+  // be dropped by the serve-time filter anyway, so don't offer them. The
+  // kickoff's location counts too: an explicit "India" search must stay
+  // India-shaped even when the parsed profile has no location yet.
+  const isIndiaMarket = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(profile.location || '')
+    || /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(locationHint || '');
   const marketJobs = isIndiaMarket
     ? rawJobs.filter((j) => /india|bengaluru|bangalore|pune/i.test(j.location))
     : rawJobs;
