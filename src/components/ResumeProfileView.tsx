@@ -15,6 +15,7 @@ import {
   Shield,
   HelpCircle,
   AlertTriangle,
+  MapPin,
 } from 'lucide-react';
 
 interface ResumeProfileViewProps {
@@ -40,6 +41,7 @@ export const ResumeProfileView: React.FC<ResumeProfileViewProps> = ({
   React.useEffect(() => {
     if (profile) {
       setFormData(profile);
+      setLocationDraft(profile.location || '');
     }
   }, [profile]);
 
@@ -209,10 +211,11 @@ Principal DevOps & Cloud Infrastructure Engineer with 9+ years experience archit
     }
   };
 
-  const handleSaveProfile = async () => {
-    if (!formData) return;
+  const handleSaveProfile = async (override?: CandidateProfile) => {
+    const source = override || formData;
+    if (!source) return;
     try {
-      const updated = await api.updateProfile(formData);
+      const updated = await api.updateProfile(source);
       setFormData(updated);
       await refreshProfile();
       setSaveSuccess(true);
@@ -220,6 +223,15 @@ Principal DevOps & Cloud Infrastructure Engineer with 9+ years experience archit
     } catch (err) {
       alert('Failed to save profile: ' + (err instanceof Error ? err.message : String(err)));
     }
+  };
+
+  // Inline "set your location" card (top of page): the discovery agent's
+  // geographic targeting depends on this field, and it sits deep in the form
+  // below — surface a shortcut while it's still empty.
+  const [locationDraft, setLocationDraft] = useState<string>(profile?.location || '');
+  const handleSaveLocation = async () => {
+    if (!formData) return;
+    await handleSaveProfile({ ...formData, location: locationDraft.trim() });
   };
 
   const addSkill = () => {
@@ -259,7 +271,7 @@ Principal DevOps & Cloud Infrastructure Engineer with 9+ years experience archit
         </div>
 
         <button
-          onClick={handleSaveProfile}
+          onClick={() => handleSaveProfile()}
           className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-2 self-start sm:self-auto shadow-md shadow-indigo-950 transition-colors"
         >
           <Save className="w-3.5 h-3.5" />
@@ -285,6 +297,40 @@ Principal DevOps & Cloud Infrastructure Engineer with 9+ years experience archit
             className="text-xs text-rose-400 hover:text-rose-200 underline"
           >
             Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Location-first action card: the discovery agent's geographic
+          targeting depends on profile.location, which sits deep in the form
+          below — surface it prominently while it's still empty. */}
+      {!formData.location && (
+        <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-700/60 flex flex-col sm:flex-row sm:items-end gap-3">
+          <div className="flex-1 space-y-1">
+            <label className="text-xs font-semibold text-amber-200 flex items-center gap-1.5">
+              <MapPin className="w-3.5 h-3.5 text-amber-400" />
+              Set your location — the agent needs it to target your job market
+            </label>
+            <input
+              type="text"
+              value={locationDraft}
+              onChange={(e) => setLocationDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleSaveLocation(); }}
+              placeholder="e.g. Bengaluru, India"
+              className="w-full h-10 rounded-lg bg-slate-950 border border-amber-600/60 px-3 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+            />
+            <p className="text-[11px] text-amber-200/70">
+              Without it, discovery can&apos;t tell which country&apos;s openings you can actually work — results skew
+              randomly. You can change it anytime under &quot;Personal Details&quot; below.
+            </p>
+          </div>
+          <button
+            onClick={handleSaveLocation}
+            disabled={!locationDraft.trim() || isParsing}
+            className="h-10 px-5 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-xs font-semibold text-slate-950 flex items-center gap-2 shrink-0 transition-colors"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Save Location</span>
           </button>
         </div>
       )}
