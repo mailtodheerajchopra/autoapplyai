@@ -116,6 +116,11 @@ class DatabaseService {
         }
         this.data = stored;
         console.log(`[db] Snapshot hydrated from ${this.store.name} store`);
+        if (stored.jobs.length !== beforeDedupe) {
+          // Persist the cleaned snapshot right away so the one-time dedupe is
+          // durable even if no other write happens on this instance.
+          await this.saveNow();
+        }
       } else {
         await this.saveNow();
         console.log(`[db] No stored snapshot — seeded database pushed to ${this.store.name} store`);
