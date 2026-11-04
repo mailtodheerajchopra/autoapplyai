@@ -40,6 +40,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [portalFilter, setPortalFilter] = useState<string>('all');
+  const [locationFilter, setLocationFilter] = useState<string>('all');
   const [minMatch, setMinMatch] = useState<number>(80);
 
   // Agent configuration modal / trigger state
@@ -180,6 +181,17 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
     }
   };
 
+  // Lightweight country inference mirroring the server's preferred-location
+  // rule, so users can slice a mixed historical feed by geography.
+  const countryOfJob = (loc: string, remoteType?: string): string => {
+    const l = (loc || '').toLowerCase();
+    if ((remoteType || '').toLowerCase() === 'remote') return 'remote';
+    if (/\b(usa|united states|us)\b|,\s*(ca|ny|tx|wa|ma|il|ga|fl|va|nc|or|co|az|dc|pa|nj|mi|oh)\b/i.test(l)) return 'us';
+    if (/india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|gurugram|kolkata/i.test(l)) return 'india';
+    return 'other';
+  };
+  const profileCountry = countryOfJob(profile?.location || '');
+
   const filteredJobs = jobs.filter((job) => {
     const matchesSearch =
       job.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -190,7 +202,14 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
     const matchesPortal = portalFilter === 'all' || job.portalType === portalFilter;
     const matchesScore = job.matchScore >= minMatch;
 
-    return matchesSearch && matchesSource && matchesPortal && matchesScore;
+    const jobCountry = countryOfJob(job.location, job.remoteType);
+    const matchesLocation =
+      locationFilter === 'all'
+      || (locationFilter === 'my-country' && (jobCountry === profileCountry || jobCountry === 'remote'))
+      || (locationFilter === 'remote' && jobCountry === 'remote')
+      || locationFilter === jobCountry;
+
+    return matchesSearch && matchesSource && matchesPortal && matchesScore && matchesLocation;
   });
 
   return (
@@ -381,6 +400,22 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap text-xs">
+          <div className="flex items-center gap-1.5 text-slate-400">
+            <Filter className="w-3.5 h-3.5" />
+            <span>Location:</span>
+            <select
+              value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+              className="h-9 px-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white focus:outline-none focus:border-indigo-500"
+            >
+              <option value="all">All</option>
+              <option value="my-country">My Country + Remote</option>
+              <option value="remote">Remote only</option>
+              <option value="india">India</option>
+              <option value="us">US</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
           <div className="flex items-center gap-1.5 text-slate-400">
             <Filter className="w-3.5 h-3.5" />
             <span>Portal:</span>
