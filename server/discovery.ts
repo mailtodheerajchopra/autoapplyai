@@ -121,8 +121,11 @@ export function filterLocationJobs<T extends { location?: string; remoteType?: s
     const remoteCountry = isRemote ? countryOf(j.location || '') : '';
     let compatible: boolean;
     if (isRemote && remoteCountry && profileCountry && remoteCountry !== profileCountry) {
-      // …unless the user explicitly targeted that country.
-      compatible = targets.some((t) => t && loc.includes(t));
+      // …unless the user explicitly targeted that country. The bare token
+      // "remote" does NOT count — it's a work-type preference, and location
+      // strings like "San Francisco, CA / Remote" contain the word, which
+      // would otherwise rescue every cross-country posting.
+      compatible = targets.some((t) => !/^(remote|anywhere|any|hybrid|on-?site)$/.test(t) && loc.includes(t));
     } else if (isRemote) {
       compatible = true;
     } else if (targets.length) {

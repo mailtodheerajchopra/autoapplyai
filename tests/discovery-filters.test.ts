@@ -224,6 +224,18 @@ describe('Enforce 3 — STRICT preferred-location filter', () => {
     expect(kept).toHaveLength(1);
   });
 
+  it('a bare "Remote" target does NOT rescue country-named remote postings (location strings often contain the word)', () => {
+    // Regression: "San Francisco, CA / Remote" contains "remote", so a
+    // targetLocations of ["Remote"] used to rescue every cross-country job.
+    const { kept, dropped } = filterLocationJobs(
+      [mkJob('San Francisco, CA / Remote', 'Remote'), mkJob('Remote, US', 'Remote')],
+      'India',
+      ['Remote'],
+    );
+    expect(kept).toHaveLength(0);
+    expect(dropped).toBe(2);
+  });
+
   it('never over-filters remote postings when the profile country is unknown', () => {
     const { kept } = filterLocationJobs(
       [mkJob('Remote, US', 'Remote')],

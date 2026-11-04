@@ -480,6 +480,7 @@ For each job, provide realistic job descriptions, exact required skills, portal 
     // Tertiary tier: open-source model on Groq (free key) absorbs the scan
     // when the whole Gemini chain is quota-exhausted. Same prompt, same
     // sanitizer, same job-shape mapping — just a different inference host.
+    let groqNote = 'GROQ_API_KEY not set';
     if (groqEnabled()) {
       try {
         console.warn("[discovery] degrading to Groq open-source tier:", groqModelName());
@@ -492,10 +493,13 @@ For each job, provide realistic job descriptions, exact required skills, portal 
         return { jobs: mapDiscoveredItems(raw, excludedList, profile, recencyCap), provider: `${groqModelName()} (Gemini quota degraded)` };
       } catch (groqErr) {
         console.error("Groq fallback error:", groqErr);
+        // Surface the reason in the agent log's tier line so a misconfigured
+        // key/model is diagnosable from the UI instead of only server logs.
+        groqNote = `groq failed: ${String((groqErr as { message?: string })?.message || groqErr).slice(0, 120)}`;
       }
     }
 
-    return { jobs: getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45), provider: 'mock-fallback (all AI tiers exhausted)' };
+    return { jobs: getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45), provider: `mock-fallback (Gemini quota/busy; ${groqNote})` };
   }
 }
 
@@ -893,7 +897,15 @@ function getFallbackDiscoveredJobs(profile: CandidateProfile, recencyCap = 45): 
     },
   ];
 
-  return rawJobs.map(j => {
+  // The mock tier obeys the same geo rules as the AI tiers: an India-market
+  // candidate gets the India slice only — US canned entries would (correctly)
+  // be dropped by the serve-time filter anyway, so don't offer them.
+  const isIndiaMarket = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(profile.location || '');
+  const marketJobs = isIndiaMarket
+    ? rawJobs.filter((j) => /india|bengaluru|bangalore|pune/i.test(j.location))
+    : rawJobs;
+
+  return marketJobs.map(j => {
     const isConflict = excluded.some(ex => ex && j.company.toLowerCase().includes(ex.toLowerCase()));
     // Respect the incremental-sweep window in fallback mode too, so degraded
     // sweeps can never pollute the pool history with back-dated postings.
