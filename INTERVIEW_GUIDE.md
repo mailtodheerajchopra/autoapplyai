@@ -30,7 +30,7 @@ React (TypeScript) SPA → Express API deployed as a **single serverless entry o
 | API | Node/Express on Vercel Functions | single entry (`maxDuration=60`) for long AI calls |
 | Storage | Supabase JSONB snapshot (RLS, secret key only) | serverless-friendly "durable blob with atomic read-modify-write" — persisted on every mutation with **3-attempt retry** on network blips |
 | AI | Google Gemini (`gemini-3.8-flash` → `3.5-flash` degradation chain) | structured JSON output via response schemas; free-tier aware |
-| Tests | Vitest + Supertest — **36 tests** | API-level contract tests incl. auth lockdown, filters, moderation, async pipeline, storage round-trip |
+| Tests | Vitest + Supertest — **45 tests** | API-level contract tests incl. auth lockdown, filters, moderation, async pipeline, storage round-trip |
 | Load | k6 | verified p95 ≈ 300ms kickoff under concurrent load, 0 API errors |
 | Infra | Vercel (Hobby) + Vercel Cron + GitHub CI-less manual sync | zero-cost deployment with production alias |
 
@@ -50,12 +50,14 @@ gemini-3.8-flash (12s attempt budget) → gemini-3.5-flash (30s) → mock fallba
 
 ### 4.3 Shared DiscoveryPool (quota amortization)
 - One market scan per **(skills fingerprint + filters)**, TTL 4h, stored as a shared pool of template jobs.
-- Per-user rules applied **at serve time** (never stored): 45-day freshness (postings age as the pool ages), current-employer conflict shield, preferred-location rule, min match score.
+- Per-user rules applied **at serve time** (never stored): 45-day freshness (per-job aging via `jobFetchedAt`), current-employer conflict shield, preferred-location rule, experience-demand rule, min match score.
 - 10 users with the same profile = **1 AI call instead of 10**.
+- **Incremental daily refresh**: the day-1 scan covers a full 45-day window; the cron sweeper then asks Gemini *only for postings from the last ~2 days* (`recencyWindowDays`) and **merges** them into the historical pool (`mergePoolJobs`: company+title dedupe, 60-posting cap, 61-day prune) — the same daily quota now buys exclusively new coverage, and the historical search stays retrievable.
 - Daily **cron sweeper** refreshes the most-requested scans so users find *new* postings without triggering runs (guarded by `CRON_SECRET` bearer).
 
-### 4.4 The location/culture rule
+### 4.4 The location/experience rules
 - "A person in India should not see a US on-site job unless it's remote": country inference (country words + `City, ST` state-suffix heuristics), cross-state US postings allowed, `Remote` always kept, explicit `targetLocations` supported.
+- **Experience-demand rule**: postings demanding wildly more experience than the candidate has (`N+ years` parsing, tolerance +2y) and seniority-titled roles (Staff/Principal/Director for juniors, internships for professionals) are hidden, never applied to.
 
 ### 4.5 Free-tier data durability
 - One optimistic snapshot write per mutation; transient Supabase `fetch failed` retried with bounded backoff; registration writes are **awaited & acknowledged** (`persisted: true/false` in the response).
@@ -80,6 +82,9 @@ gemini-3.8-flash (12s attempt budget) → gemini-3.5-flash (30s) → mock fallba
 
 ### Data privacy
 - `.env` secrets never committed; Supabase secret key with RLS; credentials hashed; per-user data isolation; the shared pool carries no user-specific filters (applied per user at serve time).
+- **Open-source-ready credentials**: the admin account is derived purely from `ADMIN_EMAIL`/`ADMIN_PASSWORD` env vars (with a random one-time password fallback logged to the server console); no credential, API token, or DB password exists anywhere in the repo.
+- **Resume privacy**: keywords extracted from the CV are never shown/prefilled in the UI — the agent applies them server-side without exposing them.
+- Google OAuth: CSRF-signed state (HMAC-SHA256 + expiry), strictly verified-email linking, passwordless candidate provisioning.
 
 ---
 
@@ -89,9 +94,9 @@ gemini-3.8-flash (12s attempt budget) → gemini-3.5-flash (30s) → mock fallba
 |---|---|
 | Kickoff latency under load (k6, concurrent users) | p95 ≈ 300 ms |
 | Discovery run (background) | ~10–30s (model-bound, never blocks UI) |
-| Tests | 36 passing (API contract + filters + moderation + async pipeline) |
-| Deploy | Vercel production alias, single `api/index.ts` entry (60s budget) |
-| Free-tier cost | $0 — Hobby plan, daily cron, Gemini free tier amortized by the pool |
+| Tests | 45 passing (API contract + filters + moderation + async pipeline + pool merge + experience rules) |
+| Deploy | Vercel production alias + custom domain (Cloudflare DNS → Vercel), single `api/index.ts` entry (60s budget) |
+| Free-tier cost | $0 — Hobby plan, daily cron, Gemini free tier amortized by the pool + incremental sweeps |
 
 ---
 
