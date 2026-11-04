@@ -24,3 +24,4 @@ process.env.DATA_DIR = tmpDir;
 delete process.env.SUPABASE_URL;
 delete process.env.SUPABASE_SECRET_KEY;
 delete process.env.GEMINI_API_KEY;
+delete process.env.GROQ_API_KEY;

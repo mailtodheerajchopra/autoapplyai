@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { CandidateProfile, JobPosting, ResumeDocument, WorkExperience, Education, WorkdayQuestionAnswer } from "./types.js";
+import { groqDiscoverJobs, groqEnabled, groqModelName } from "./groq.js";
 
 // Initialize the shared Gemini client utility
 const apiKey = process.env.GEMINI_API_KEY || "";
@@ -44,7 +45,7 @@ function sanitizeText(value: unknown, max = 2000): unknown {
 }
 
 /** Walks a parsed model payload and sanitizes every string it contains. */
-function deepSanitize<T>(obj: T): T {
+export function deepSanitize<T>(obj: T): T {
   if (Array.isArray(obj)) return obj.map(deepSanitize) as unknown as T;
   if (obj && typeof obj === 'object') {
     const out: Record<string, unknown> = {};
@@ -296,6 +297,35 @@ Provide a crisp professional headline and executive summary. The final profile f
  * Autonomous Job Discovery Agent:
  * Discovers and computes matches for candidate against openings from LinkedIn, Naukri, Workday Portals, etc.
  */
+/** Maps a raw model item to the JobPosting template shape (shared by Gemini and Groq tiers). */
+function mapDiscoveredItems(
+  parsed: Array<any>,
+  excludedList: string[],
+  profile: CandidateProfile,
+  recencyCap: number,
+): Array<Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>> {
+  return parsed.map((item: any) => {
+    const daysAgo = typeof item.postedDaysAgo === 'number' ? Math.max(1, Math.min(recencyCap, item.postedDaysAgo)) : Math.floor(Math.random() * recencyCap) + 1;
+    const postedDate = new Date(Date.now() - daysAgo * 86400000).toISOString();
+    const isConflict = Boolean(
+      excludedList.some(ex => ex && item.company.toLowerCase().includes(ex.toLowerCase()))
+    );
+
+    return {
+      ...item,
+      postedDaysAgo: daysAgo,
+      postedDate,
+      isStale: daysAgo > 45,
+      isConflictOfInterest: isConflict,
+      conflictReason: isConflict ? `Matches excluded/current employer (${profile.currentEmployer})` : undefined,
+      sourceUrl: item.sourceUrl || (item.portalType === 'workday'
+        ? `https://${item.company.toLowerCase().replace(/[^a-z0-9]/g, '')}.wd1.myworkdayjobs.com/Careers/job/${encodeURIComponent(item.title.toLowerCase().replace(/\s+/g, '-'))}`
+        : `https://www.linkedin.com/jobs/view/${encodeURIComponent(item.title.toLowerCase().replace(/\s+/g, '-'))}`),
+      status: 'discovered',
+    };
+  });
+}
+
 export async function discoverJobsWithAgent(
   profile: CandidateProfile,
   searchOptions: {
@@ -307,7 +337,7 @@ export async function discoverJobsWithAgent(
     /** Incremental-sweep mode: restrict the model to the last N days. */
     recencyWindowDays?: number;
   }
-): Promise<Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>[]> {
+): Promise<{ jobs: Array<Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>>; provider: string }> {
   const allSkills = profile.skills.flatMap(s => s.items).concat(profile.primarySkills);
   const excludedList = Array.from(new Set([profile.currentEmployer, ...(profile.excludedEmployers || [])].filter(Boolean)));
   
@@ -335,8 +365,7 @@ Generate 6 realistic, highly relevant job openings actively hiring in tech compa
 For each job, provide realistic job descriptions, exact required skills, portal type (specify 'workday' for enterprise company career sites, or 'greenhouse' / 'lever' / 'direct'), calculate an objective matchScore (0-100), identify matching skills, missing skills, postedDaysAgo (1-45), and provide a 1-sentence fit rationale.`;
 
   try {
-    const callPromise = generateWithModelChain({
-      model: MODEL_NAME,
+    const callPromise = generateWithModelChain({      model: MODEL_NAME,
       contents: prompt,
       config: {
         systemInstruction: "You are an autonomous AI recruiter and job search agent. Output structured JSON matching current market roles and realistic ATS portal paths." + UNTRUSTED_DATA_RULE,
@@ -412,29 +441,29 @@ For each job, provide realistic job descriptions, exact required skills, portal 
 
     const parsed = deepSanitize(JSON.parse(response.text || "[]"));
     const recencyCap = searchOptions.recencyWindowDays ?? 45;
-    return parsed.map((item: any) => {
-      const daysAgo = typeof item.postedDaysAgo === 'number' ? Math.max(1, Math.min(recencyCap, item.postedDaysAgo)) : Math.floor(Math.random() * recencyCap) + 1;
-      const postedDate = new Date(Date.now() - daysAgo * 86400000).toISOString();
-      const isConflict = Boolean(
-        excludedList.some(ex => ex && item.company.toLowerCase().includes(ex.toLowerCase()))
-      );
-
-      return {
-        ...item,
-        postedDaysAgo: daysAgo,
-        postedDate,
-        isStale: daysAgo > 45,
-        isConflictOfInterest: isConflict,
-        conflictReason: isConflict ? `Matches excluded/current employer (${profile.currentEmployer})` : undefined,
-        sourceUrl: item.sourceUrl || (item.portalType === 'workday' 
-          ? `https://${item.company.toLowerCase().replace(/[^a-z0-9]/g, '')}.wd1.myworkdayjobs.com/Careers/job/${encodeURIComponent(item.title.toLowerCase().replace(/\s+/g, '-'))}`
-          : `https://www.linkedin.com/jobs/view/${encodeURIComponent(item.title.toLowerCase().replace(/\s+/g, '-'))}`),
-        status: 'discovered',
-      };
-    });
+    return { jobs: mapDiscoveredItems(parsed, excludedList, profile, recencyCap), provider: MODEL_NAME };
   } catch (error) {
     console.error("Gemini job search error:", error);
-    return getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45);
+
+    // Tertiary tier: open-source model on Groq (free key) absorbs the scan
+    // when the whole Gemini chain is quota-exhausted. Same prompt, same
+    // sanitizer, same job-shape mapping — just a different inference host.
+    if (groqEnabled()) {
+      try {
+        console.warn("[discovery] degrading to Groq open-source tier:", groqModelName());
+        const raw = await groqDiscoverJobs(
+          prompt,
+          "You are an autonomous AI recruiter and job search agent. Output structured JSON matching current market roles and realistic ATS portal paths." + UNTRUSTED_DATA_RULE,
+          30_000,
+        );
+        const recencyCap = searchOptions.recencyWindowDays ?? 45;
+        return { jobs: mapDiscoveredItems(raw, excludedList, profile, recencyCap), provider: `${groqModelName()} (Gemini quota degraded)` };
+      } catch (groqErr) {
+        console.error("Groq fallback error:", groqErr);
+      }
+    }
+
+    return { jobs: getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45), provider: 'mock-fallback (all AI tiers exhausted)' };
   }
 }
 

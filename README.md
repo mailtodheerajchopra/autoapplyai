@@ -103,6 +103,7 @@ AutoApply AI is a production-grade agent platform that:
 | `ADMIN_PASSWORD` | ✅* | Admin account password (strong & random) |
 | `APP_URL` | ⬜ | Self-referential links / callbacks |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | ⬜ | Enables "Sign in with Google" (button auto-appears; also list your redirect URI in Google Cloud console) |
+| `GROQ_API_KEY` | ⬜ | Open-source fallback tier: when both Gemini tiers are quota-exhausted, discovery degrades to Llama 3.3 70B hosted on Groq (free key at console.groq.com) before the mock |
 
 \* If `ADMIN_EMAIL`/`ADMIN_PASSWORD` are absent, the app generates a random admin password and logs it **once** to the server console — set the env vars before going public.
 

@@ -18,8 +18,7 @@
 import { waitUntil } from '@vercel/functions';
 import crypto from 'crypto';
 import { db } from './db.js';
-import { discoverJobsWithAgent } from './gemini.js';
-import { CandidateProfile, DiscoveryJob, DiscoveryJobResult, DiscoveryOptions, JobPosting } from './types.js';
+import { discoverJobsWithAgent } from './gemini.js';import { CandidateProfile, DiscoveryJob, DiscoveryJobResult, DiscoveryOptions, JobPosting } from './types.js';
 
 // ─── Tunables (free-tier aware) ──────────────────────────────────────────────
 const USER_COOLDOWN_MS = 45_000; // minimum spacing between agent runs per user
@@ -197,8 +196,8 @@ async function markStage(userId: string, jobId: string, status: DiscoveryJob['st
 async function executeDiscovery(userId: string, jobId: string, profile: CandidateProfile, options: DiscoveryOptions): Promise<{ result: DiscoveryJobResult; jobIds: string[] }> {
   await markStage(userId, jobId, 'running', 10, 'Scanning portals…');
 
-  const rawDiscovered = await discoverJobsWithAgent(profile, options);
-  await markStage(userId, jobId, 'running', 55, `Parsed ${rawDiscovered.length} raw openings`);
+  const { jobs: rawDiscovered, provider } = await discoverJobsWithAgent(profile, options);
+  await markStage(userId, jobId, 'running', 55, `Parsed ${rawDiscovered.length} raw openings (AI tier: ${provider})`);
 
   // Share the scan: store the raw template in the shared pool so any user with
   // this market fingerprint reuses it (per-user filters apply at serve time).
@@ -281,6 +280,7 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
       ...newJobs.map((j) => `${j.company}: ${j.title} (${j.matchScore}% fit, Posted ${j.postedDaysAgo}d ago)`),
       ...(droppedStaleCount > 0 ? [`Discarded ${droppedStaleCount} postings older than 45 days`] : []),
       ...(droppedConflictCount > 0 ? [`Blocked ${droppedConflictCount} postings matching current employer/exclusions`] : []),
+      `AI tier: ${provider}${provider !== 'gemini-3.8-flash' ? ' — primary Gemini quota/busy, degraded per fallback chain' : ''}`,
     ],
   });
 
@@ -676,7 +676,7 @@ export async function sweepDiscoveryPool(maxEntries = 2): Promise<{
       console.log(`[sweep] refreshing pool entry ${entry.poolKey.slice(0, 8)}…`);
       // Incremental mode: ask the model ONLY for postings from the last ~2 days
       // so the sweep costs the same quota but exclusively buys new coverage.
-      const raw = await discoverJobsWithAgent(profile, { ...options, recencyWindowDays: 2 });
+      const { jobs: raw } = await discoverJobsWithAgent(profile, { ...options, recencyWindowDays: 2 });
       const now = new Date().toISOString();
       db.putPoolEntry({
         ...entry,
