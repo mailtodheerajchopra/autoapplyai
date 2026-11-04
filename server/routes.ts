@@ -178,6 +178,52 @@ function googleOauthEnabled(): boolean {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
+/**
+ * Shared tail of every OAuth provider callback: find-or-create the local
+ * account, mint a session token, persist durably, and hand the SPA a one-shot
+ * ?oauthToken= it stores and immediately scrubs. Providers hand back verified
+ * emails only — that is the account-link safety, so an unverified email is
+ * rejected rather than auto-linked.
+ */
+async function completeOAuthLogin(
+  provider: 'google' | 'linkedin',
+  info: { email?: string; email_verified?: boolean; name?: string },
+  back: (pathInfo: string) => string,
+  res: Response
+): Promise<void> {
+  if (!info.email) { res.redirect(back('/?oauthError=userinfo')); return; }
+  // Providers hand back verified emails only — this check is the account-link
+  // safety. Absence counts as unverified; never auto-link on a maybe.
+  if (info.email_verified !== true) { res.redirect(back('/?oauthError=email_not_verified')); return; }
+
+  let user = db.findUserByEmail(info.email);
+  if (!user) {
+    user = db.createUser(info.email, info.name || info.email.split('@')[0], crypto.randomBytes(24).toString('base64url'), 'candidate');
+    db.addAuditLog({
+      userId: user.id,
+      timestamp: new Date().toISOString(),
+      category: 'security',
+      action: `USER_REGISTERED_${provider.toUpperCase()}`,
+      details: `${provider}-verified sign-up for ${user.email} (passwordless account provisioned, role: candidate).`,
+      severity: 'success',
+    });
+  } else {
+    db.addAuditLog({
+      userId: user.id,
+      timestamp: new Date().toISOString(),
+      category: 'security',
+      action: 'OAUTH_LOGIN',
+      details: `${provider}-verified login for ${user.email}.`,
+      severity: 'info',
+    });
+  }
+
+  const token = generateToken(user.id);
+  await db.flush();
+  res.setHeader('Cache-Control', 'no-store');
+  res.redirect(back(`/?oauthToken=${encodeURIComponent(token)}`));
+}
+
 function requestBase(req: Request): { host: string; proto: string } {
   const host = ((req.headers['x-forwarded-host'] as string) || (req.headers.host as string) || 'localhost:3000').split(',')[0].trim();
   const proto = ((req.headers['x-forwarded-proto'] as string) || host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https').split(',')[0];
@@ -206,6 +252,11 @@ function verifySignedState(state: string): { exp: number } | null {
 
 apiRouter.get('/auth/google/config', (_req: Request, res: Response) => {
   res.json({ google: googleOauthEnabled() });
+});
+
+// Combined provider-capability probe for the sign-in modal.
+apiRouter.get('/auth/oauth/config', (_req: Request, res: Response) => {
+  res.json({ google: googleOauthEnabled(), linkedin: linkedinOauthEnabled() });
 });
 
 apiRouter.get('/auth/google/start', (req: Request, res: Response) => {
@@ -255,41 +306,88 @@ apiRouter.get('/auth/google/callback', async (req: Request, res: Response) => {
 
     const infoRes = await fetch(GOOGLE_USERINFO_URL, { headers: { Authorization: `Bearer ${accessToken}` } });
     const info = await infoRes.json() as { email?: string; email_verified?: boolean; name?: string };
-    if (!infoRes.ok || !info.email) { console.error('[google] userinfo failed', infoRes.status); res.redirect(fail('userinfo')); return; }
-    // Google returns verified emails only — this check is the account-link safety.
-    if (!info.email_verified) { res.redirect(fail('email_not_verified')); return; }
+    if (!infoRes.ok) { console.error('[google] userinfo failed', infoRes.status); res.redirect(fail('userinfo')); return; }
 
-    // Find-or-create: an email already registered keeps its existing account
-    // (Google only hands back verified emails); otherwise a passwordless
-    // candidate account is created with an unguessable password hash.
-    let user = db.findUserByEmail(info.email);
-    if (!user) {
-      user = db.createUser(info.email, info.name || info.email.split('@')[0], crypto.randomBytes(24).toString('base64url'), 'candidate');
-      db.addAuditLog({
-        userId: user.id,
-        timestamp: new Date().toISOString(),
-        category: 'security',
-        action: 'USER_REGISTERED_GOOGLE',
-        details: `Google-verified sign-up for ${user.email} (passwordless account provisioned, role: candidate).`,
-        severity: 'success',
-      });
-    } else {
-      db.addAuditLog({
-        userId: user.id,
-        timestamp: new Date().toISOString(),
-        category: 'security',
-        action: 'OAUTH_LOGIN',
-        details: `Google-verified login for ${user.email}.`,
-        severity: 'info',
-      });
-    }
-
-    const token = generateToken(user.id);
-    await db.flush();
-    res.setHeader('Cache-Control', 'no-store');
-    res.redirect(back(`/?oauthToken=${encodeURIComponent(token)}`));
+    await completeOAuthLogin('google', info, back, res);
   } catch (err) {
     console.error('[google] oauth error:', err);
+    res.redirect(fail('unexpected'));
+  }
+});
+
+// ==========================================
+// LinkedIn OAuth ("Sign in with LinkedIn" — OpenID Connect)
+// ==========================================
+// Same contract as the Google flow: enabled only when LINKEDIN_CLIENT_ID +
+// LINKEDIN_CLIENT_SECRET are configured; /auth/linkedin/start 302s to the
+// LinkedIn consent screen with an AUTH_SECRET-signed state, and the callback
+// exchanges the code, reads the OIDC userinfo payload, and reuses the shared
+// find-or-create + durable-flush + one-shot-token handoff.
+
+const LINKEDIN_AUTH_URL = 'https://www.linkedin.com/oauth/v2/authorization';
+const LINKEDIN_TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken';
+const LINKEDIN_USERINFO_URL = 'https://api.linkedin.com/v2/userinfo';
+
+function linkedinOauthEnabled(): boolean {
+  return Boolean(process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET);
+}
+
+apiRouter.get('/auth/linkedin/config', (_req: Request, res: Response) => {
+  res.json({ linkedin: linkedinOauthEnabled() });
+});
+
+apiRouter.get('/auth/linkedin/start', (req: Request, res: Response) => {
+  if (!linkedinOauthEnabled()) {
+    res.status(404).json({ error: 'LinkedIn sign-in is not configured' });
+    return;
+  }
+  const { host, proto } = requestBase(req);
+  const redirectUri = `${proto}://${host}/api/auth/linkedin/callback`;
+  const state = signPayload({ exp: Date.now() + 10 * 60_000, nonce: crypto.randomUUID(), from: host });
+  const url = new URL(LINKEDIN_AUTH_URL);
+  url.searchParams.set('client_id', process.env.LINKEDIN_CLIENT_ID!);
+  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set('response_type', 'code');
+  // OIDC scopes: userinfo returns { sub, name, email, email_verified }.
+  url.searchParams.set('scope', 'openid profile email');
+  url.searchParams.set('state', state);
+  res.setHeader('Cache-Control', 'no-store');
+  res.redirect(url.toString());
+});
+
+apiRouter.get('/auth/linkedin/callback', async (req: Request, res: Response) => {
+  const { host, proto } = requestBase(req);
+  const back = (pathInfo: string) => `${proto}://${host}${pathInfo}`;
+  const fail = (msg: string) => back(`/?oauthError=${encodeURIComponent(msg)}`);
+
+  if (!linkedinOauthEnabled()) { res.redirect(fail('not_configured')); return; }
+  if (!verifySignedState(String(req.query.state || ''))) { res.redirect(fail('bad_state')); return; }
+  const code = String(req.query.code || '');
+  if (!code) { res.redirect(fail(req.query.error ? 'cancelled' : 'missing_code')); return; }
+
+  try {
+    const tokenRes = await fetch(LINKEDIN_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.LINKEDIN_CLIENT_ID!,
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET!,
+        redirect_uri: `${proto}://${host}/api/auth/linkedin/callback`,
+        grant_type: 'authorization_code',
+      }),
+    });
+    if (!tokenRes.ok) { console.error('[linkedin] token exchange failed', tokenRes.status, await tokenRes.text()); res.redirect(fail('token_exchange')); return; }
+    const accessToken = (await tokenRes.json() as { access_token?: string }).access_token;
+    if (!accessToken) { res.redirect(fail('no_token')); return; }
+
+    const infoRes = await fetch(LINKEDIN_USERINFO_URL, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const info = await infoRes.json() as { email?: string; email_verified?: boolean; name?: string };
+    if (!infoRes.ok) { console.error('[linkedin] userinfo failed', infoRes.status); res.redirect(fail('userinfo')); return; }
+
+    await completeOAuthLogin('linkedin', info, back, res);
+  } catch (err) {
+    console.error('[linkedin] oauth error:', err);
     res.redirect(fail('unexpected'));
   }
 });

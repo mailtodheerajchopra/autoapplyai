@@ -111,3 +111,27 @@ describe('self-service password change', () => {
     expect(res.body.error).toMatch(/at least 6/i);
   });
 });
+
+describe('OAuth provider plumbing', () => {
+  const app = createApp();
+
+  it('reports both providers unconfigured when no client credentials exist', async () => {
+    const res = await request(app).get('/api/auth/oauth/config');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ google: false, linkedin: false });
+  });
+
+  it('start endpoints 404 while unconfigured', async () => {
+    expect((await request(app).get('/api/auth/google/start')).status).toBe(404);
+    expect((await request(app).get('/api/auth/linkedin/start')).status).toBe(404);
+  });
+
+  it('callback redirects back with oauthError while unconfigured', async () => {
+    const res = await request(app).get('/api/auth/google/callback?state=x.y&code=c');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('oauthError=not_configured');
+    const li = await request(app).get('/api/auth/linkedin/callback?state=x.y&code=c');
+    expect(li.status).toBe(302);
+    expect(li.headers.location).toContain('oauthError=not_configured');
+  });
+});

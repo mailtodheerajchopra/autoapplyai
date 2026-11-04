@@ -11,20 +11,36 @@ import {
 
 const TOKEN_KEY = 'autoapply_auth_token';
 
-// OAuth handoff: the Google callback redirects back with ?oauthToken=...;
-// consume it immediately, store the token, and scrub the URL clean.
-(function pickupOAuthToken() {
+// OAuth handoff: the provider callback redirects back with ?oauthToken=...
+// (success) or ?oauthError=... (failure); consume both immediately, scrub the
+// URL clean, and stash the error where the sign-in modal can surface it.
+const OAUTH_ERROR_KEY = 'autoapply_oauth_error';
+(function pickupOAuthParams() {
   try {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('oauthToken');
-    if (t) {
-      localStorage.setItem(TOKEN_KEY, t);
+    const e = params.get('oauthError');
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    if (e) sessionStorage.setItem(OAUTH_ERROR_KEY, e);
+    if (t || e) {
       params.delete('oauthToken');
+      params.delete('oauthError');
       const qs = params.toString();
       window.history.replaceState({}, '', window.location.pathname + (qs ? '?' + qs : ''));
     }
   } catch { /* non-browser contexts — ignore */ }
 })();
+
+/** One-shot read of an OAuth failure stashed by the URL scrubber above. */
+export function consumeStoredOAuthError(): string | null {
+  try {
+    const v = sessionStorage.getItem(OAUTH_ERROR_KEY);
+    if (v) sessionStorage.removeItem(OAUTH_ERROR_KEY);
+    return v;
+  } catch {
+    return null;
+  }
+}
 
 export function getStoredToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -81,10 +97,15 @@ export const api = {
     return res;
   },
 
-  async getAuthProviders(): Promise<{ google: boolean }> {
-    const res = await fetch('/api/auth/google/config');
-    if (!res.ok) return { google: false };
-    return res.json();
+  async getAuthProviders(): Promise<{ google: boolean; linkedin: boolean }> {
+    try {
+      const res = await fetch('/api/auth/oauth/config');
+      if (!res.ok) return { google: false, linkedin: false };
+      const cfg = await res.json() as { google?: boolean; linkedin?: boolean };
+      return { google: !!cfg.google, linkedin: !!cfg.linkedin };
+    } catch {
+      return { google: false, linkedin: false };
+    }
   },
 
   async register(name: string, email: string, password: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {    const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/register', {
