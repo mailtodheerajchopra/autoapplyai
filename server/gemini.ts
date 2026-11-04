@@ -325,7 +325,10 @@ STRICT CANDIDATE SAFETY FILTERS:
    Candidate's current / last employer is: "${profile.currentEmployer || 'None declared'}".
    Candidate's excluded employers list: [${excludedList.join(', ')}].
    NEVER return or apply to jobs at these excluded companies under any circumstance.
-2. JOB POSTING FRESHNESS:
+2. GEOGRAPHIC RELEVANCE (candidate's market):   The candidate's market is: "${(searchOptions.location || profile.location || '').trim() || 'not specified'}".${/india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(searchOptions.location || profile.location || '') ? `
+   This is an INDIA-based candidate: AT LEAST 4 of the 6 openings must be located in India (Bangalore, Hyderabad, Pune, Gurgaon/Noida, Mumbai, Chennai, or India-Remote) — surface them as seen on Naukri, LinkedIn India, and Indian enterprises (Infosys, TCS, Wipro, Cognizant, Accenture India, Flipkart, Zoho, Razorpay, Swiggy, Paytm, or MNC India offices). A US posting is acceptable ONLY when it is fully Remote.` : `
+   Prefer openings physically located in (or Remote-eligible for) the candidate's market. Cross-country on-site postings are undesirable — the serve-time location filter will drop them.`}
+3. JOB POSTING FRESHNESS:
    Strict requirement: ONLY return jobs posted within the last 45 days (between 1 and 45 days ago). Completely discard any job postings older than 45 days. Set postedDaysAgo to an integer between 1 and 45.${searchOptions.recencyWindowDays ? `\n   INCREMENTAL SWEEP MODE: this is a daily refresh scan. ONLY return jobs posted within the last ${searchOptions.recencyWindowDays} day(s) — postedDaysAgo must be between 1 and ${searchOptions.recencyWindowDays}. Do NOT repeat well-known older postings; surface ONLY fresh announcements from today/yesterday.` : ''}
 
 Generate 6 realistic, highly relevant job openings actively hiring in tech companies (including major enterprises using Workday like Adobe, Salesforce, Cisco, Netflix, Visa, Walmart, as well as listings seen on LinkedIn and Naukri).
@@ -767,6 +770,45 @@ function getFallbackDiscoveredJobs(profile: CandidateProfile, recencyCap = 45): 
       missingSkills: ["Performance Optimization"],
       postedDaysAgo: 18,
       fitRationale: "Deep experience with React component architectures and modern responsive UI engineering.",
+      status: "discovered" as const,
+    },
+    {
+      title: "Senior Software Engineer - Payments Platform",
+      company: "Razorpay",
+      location: "Bengaluru, Karnataka / Remote (India)",
+      remoteType: "Remote" as const,
+      employmentType: "Full-time" as const,
+      salaryRange: "₹35,00,000 - ₹55,00,000 INR",
+      source: "Naukri" as const,
+      sourceUrl: "https://www.naukri.com/job-listings-senior-software-engineer-razorpay-bengaluru",
+      portalType: "direct" as const,
+      description: "Own end-to-end features on the payments and settlement platform: React frontends, Node.js services, and high-throughput ledger APIs serving millions of Indian merchants.",
+      requiredSkills: ["TypeScript", "React", "Node.js", "PostgreSQL", "Redis", "AWS"],
+      matchScore: 93,
+      matchingSkills: ["TypeScript", "React", "Node.js", "PostgreSQL"],
+      missingSkills: ["Redis"],
+      postedDaysAgo: 3,
+      fitRationale: "Strong product-engineering fit for a India-remote fintech role matching the full-stack profile.",
+      status: "discovered" as const,
+    },
+    {
+      title: "Cloud Platform Engineer - Digital Transformation",
+      company: "Infosys",
+      location: "Pune / Hybrid",
+      remoteType: "Hybrid" as const,
+      employmentType: "Full-time" as const,
+      salaryRange: "₹22,00,000 - ₹34,00,000 INR",
+      source: "Naukri" as const,
+      sourceUrl: "https://www.naukri.com/job-listings-cloud-platform-engineer-infosys-pune",
+      portalType: "workday" as const,
+      workdayTenantId: "infosys",
+      description: "Build and operate cloud-native microservices on Kubernetes for global enterprise clients, with infra-as-code on AWS and observability pipelines.",
+      requiredSkills: ["Node.js", "AWS", "Kubernetes", "Docker", "Terraform"],
+      matchScore: 88,
+      matchingSkills: ["Node.js", "AWS", "Docker"],
+      missingSkills: ["Kubernetes", "Terraform"],
+      postedDaysAgo: 6,
+      fitRationale: "Enterprise cloud role in India matching DevOps and backend fundamentals.",
       status: "discovered" as const,
     },
     {
