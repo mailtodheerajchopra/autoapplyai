@@ -131,12 +131,24 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
         return;
       }
 
-      // Poll the async job until a terminal status.
+      // Poll the async job until a terminal status. A transient 404 means the
+      // serving instance hasn't observed the job yet (cross-lambda hydration
+      // lag) — tolerate a short retry window before treating it as fatal.
       const pollIntervalMs = 800;
       const maxWaitMs = 60_000;
+      let notFoundStreak = 0;
       const startedAt = Date.now();
       while (Date.now() - startedAt < maxWaitMs) {
-        const job = await api.getDiscoveryJob(kickoff.jobId);
+        let job: Awaited<ReturnType<typeof api.getDiscoveryJob>> | null = null;
+        try {
+          job = await api.getDiscoveryJob(kickoff.jobId);
+          notFoundStreak = 0;
+        } catch (pollErr) {
+          notFoundStreak++;
+          if (notFoundStreak >= 4) throw pollErr; // genuinely lost — surface it
+          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+          continue;
+        }
         setAgentProgress(job.progress);
         if (job.status === 'completed' || job.status === 'failed') {
           if (job.status === 'failed') {

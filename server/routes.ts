@@ -567,7 +567,12 @@ apiRouter.post('/agent/discover', authMiddleware, async (req: Request, res: Resp
       minMatchScore,
     });
 
+    // DURABILITY: the poll may be served by a different lambda instance that
+    // hydrates its snapshot from Supabase at cold start. If we answer 202
+    // before the just-created job row is durably saved, that poller sees no
+    // job → "Discovery job not found". Await the flush before responding.
     if (handle.cooldownSeconds) {
+      await db.flush();
       res.status(429).json({
         error: `Discovery agent cooldown active. Try again in ${handle.cooldownSeconds}s (free-tier pacing protects agent quota).`,
         jobId: handle.jobId,
@@ -576,6 +581,7 @@ apiRouter.post('/agent/discover', authMiddleware, async (req: Request, res: Resp
       return;
     }
 
+    await db.flush();
     res.status(202).json({
       jobId: handle.jobId,
       status: handle.status,
