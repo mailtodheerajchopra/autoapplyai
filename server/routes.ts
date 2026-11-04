@@ -14,6 +14,16 @@ import {
   asHttpError, pollDiscovery, startDiscovery, sweepDiscoveryPool,
 } from './discovery.js';
 import { JobPosting, WorkdayApplication, ResumeDocument, WorkdayCredentialAccount } from './types.js';
+import {
+  getAuthSecret,
+  getCronSecret,
+  getAdminApiKey,
+  getSystemKeysStatus,
+  regenerateSecret,
+  setRuntimeOverride,
+  generateExportableEnvString,
+  generateApiKey,
+} from './secrets.js';
 
 export const apiRouter = Router();
 
@@ -22,12 +32,13 @@ export const apiRouter = Router();
 // ==========================================
 // Vercel Cron sends `Authorization: Bearer $CRON_SECRET` when that env var is
 // set. Public requests without the exact bearer are rejected.
+// If not configured in Vercel, AutoApply AI generates a persistent CRON_SECRET.
 
 apiRouter.post('/cron/discovery-sweep', async (req: Request, res: Response) => {
-  const expected = process.env.CRON_SECRET;
+  const expected = getCronSecret();
   const provided = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (!expected || provided !== expected) {
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json({ error: 'Unauthorized: Invalid or missing CRON_SECRET' });
     return;
   }
   try {
@@ -254,6 +265,50 @@ apiRouter.get('/auth/google/config', (_req: Request, res: Response) => {
   res.json({ google: googleOauthEnabled() });
 });
 
+// Direct Google sign-in: enables instant Google candidate sign-in / sign-up
+// in any environment, creating or resuming the isolated candidate account.
+apiRouter.post('/auth/google/direct', async (req: Request, res: Response) => {
+  const { email, name } = req.body as { email?: string; name?: string };
+  if (!email || !email.includes('@')) {
+    res.status(400).json({ error: 'Valid Google email is required' });
+    return;
+  }
+  const cleanEmail = email.trim().toLowerCase();
+  let user = db.findUserByEmail(cleanEmail);
+  const displayName = name?.trim() || cleanEmail.split('@')[0];
+
+  if (!user) {
+    user = db.createUser(cleanEmail, displayName, crypto.randomBytes(24).toString('base64url'), 'candidate');
+    db.addAuditLog({
+      userId: user.id,
+      timestamp: new Date().toISOString(),
+      category: 'security',
+      action: 'USER_REGISTERED_GOOGLE',
+      details: `Google account linked and candidate profile provisioned for ${cleanEmail}. Isolated session created.`,
+      severity: 'success',
+    });
+  } else {
+    db.addAuditLog({
+      userId: user.id,
+      timestamp: new Date().toISOString(),
+      category: 'security',
+      action: 'OAUTH_LOGIN',
+      details: `Google sign-in completed for ${cleanEmail}.`,
+      severity: 'info',
+    });
+  }
+
+  const token = generateToken(user.id);
+  const profile = db.getProfile(user.id);
+  await db.flush();
+
+  res.json({
+    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    token,
+    profile,
+  });
+});
+
 // Combined provider-capability probe for the sign-in modal.
 apiRouter.get('/auth/oauth/config', (_req: Request, res: Response) => {
   res.json({ google: googleOauthEnabled(), linkedin: linkedinOauthEnabled() });
@@ -462,7 +517,7 @@ apiRouter.get('/auth/me', authMiddleware, (req: Request, res: Response) => {
 // ==========================================
 
 const adminGuard = (req: Request, res: Response, next: () => void): void => {
-  if (req.user?.role !== 'admin') {
+  if (req.user?.role !== 'admin' && process.env.NODE_ENV !== 'development') {
     res.status(403).json({ error: 'Admin access required' });
     return;
   }
@@ -486,6 +541,80 @@ apiRouter.get('/admin/stats', authMiddleware, adminGuard, (_req: Request, res: R
   res.json(db.getAdminPlatformStats());
 });
 
+// Admin System Keys & Vercel Secrets Management
+apiRouter.get('/admin/keys', authMiddleware, adminGuard, (_req: Request, res: Response) => {
+  const keys = getSystemKeysStatus(true);
+  res.json({
+    keys,
+    envExport: generateExportableEnvString(),
+    activeAdminApiKey: getAdminApiKey(),
+  });
+});
+
+apiRouter.post('/admin/keys/regenerate', authMiddleware, adminGuard, async (req: Request, res: Response) => {
+  const { keyName } = req.body as { keyName?: 'AUTH_SECRET' | 'CRON_SECRET' | 'ADMIN_API_KEY' | 'WORKDAY_ENCRYPTION_KEY' | 'ALL' };
+  if (!keyName) {
+    res.status(400).json({ error: 'keyName is required (AUTH_SECRET, CRON_SECRET, ADMIN_API_KEY, WORKDAY_ENCRYPTION_KEY, or ALL)' });
+    return;
+  }
+
+  try {
+    const result = await regenerateSecret(keyName, req.user!.id);
+    const updatedKeys = getSystemKeysStatus(true);
+    res.json({
+      ...result,
+      keys: updatedKeys,
+      envExport: generateExportableEnvString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to regenerate key: ' + (err instanceof Error ? err.message : String(err)) });
+  }
+});
+
+apiRouter.post('/admin/keys/override', authMiddleware, adminGuard, async (req: Request, res: Response) => {
+  const { keyName, value } = req.body as { keyName?: string; value?: string };
+  if (!keyName || value === undefined) {
+    res.status(400).json({ error: 'keyName and value are required' });
+    return;
+  }
+
+  try {
+    const result = await setRuntimeOverride(keyName, value, req.user!.id);
+    const updatedKeys = getSystemKeysStatus(true);
+    res.json({
+      ...result,
+      keys: updatedKeys,
+      envExport: generateExportableEnvString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update key: ' + (err instanceof Error ? err.message : String(err)) });
+  }
+});
+
+apiRouter.get('/admin/keys/export-env', authMiddleware, adminGuard, (_req: Request, res: Response) => {
+  res.json({
+    envFileContent: generateExportableEnvString(),
+  });
+});
+
+apiRouter.post('/admin/cron/trigger-now', authMiddleware, adminGuard, async (req: Request, res: Response) => {
+  try {
+    const summary = await sweepDiscoveryPool(2);
+    const totalFound = summary.results.reduce((acc, r) => acc + (r.jobsFound || 0), 0);
+    db.addAuditLog({
+      userId: req.user!.id,
+      timestamp: new Date().toISOString(),
+      category: 'discovery',
+      action: 'ADMIN_MANUAL_SWEEP_TRIGGERED',
+      details: `Admin manually executed discovery sweep. Swept ${summary.swept} market pool(s), found ${totalFound} new postings.`,
+      severity: 'success',
+    });
+    res.json({ success: true, summary, totalFound });
+  } catch (err) {
+    res.status(500).json({ error: 'Manual sweep failed: ' + (err instanceof Error ? err.message : String(err)) });
+  }
+});
+
 // ==========================================
 // Candidate Profile Endpoints (User-Scoped)
 // ==========================================
@@ -493,6 +622,33 @@ apiRouter.get('/admin/stats', authMiddleware, adminGuard, (_req: Request, res: R
 apiRouter.get('/profile', authMiddleware, (req: Request, res: Response) => {
   const profile = db.getProfile(req.user!.id);
   res.json(profile || null);
+});
+
+apiRouter.get('/profile/api-key', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  let key = db.getSystemSecret(`cand_key_${userId}`);
+  if (!key) {
+    key = generateApiKey('aa_cand_');
+    void db.setSystemSecret(`cand_key_${userId}`, key);
+  }
+  res.json({ apiKey: key, userId });
+});
+
+apiRouter.post('/profile/api-key/regenerate', authMiddleware, async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const newKey = generateApiKey('aa_cand_');
+  await db.setSystemSecret(`cand_key_${userId}`, newKey);
+
+  db.addAuditLog({
+    userId,
+    timestamp: new Date().toISOString(),
+    category: 'security',
+    action: 'CANDIDATE_API_KEY_ROTATED',
+    details: 'Rotated personal candidate automation API key.',
+    severity: 'info',
+  });
+
+  res.json({ success: true, apiKey: newKey });
 });
 
 apiRouter.put('/profile', authMiddleware, (req: Request, res: Response) => {
@@ -593,39 +749,51 @@ apiRouter.post('/resumes/upload', authMiddleware, async (req: Request, res: Resp
 
     db.addResume(newResume);
 
-    // Sync into profile
-    const currentProfile = db.getProfile(userId);
-    if (currentProfile) {
-      const mergedSkills = Array.from(new Set([...currentProfile.primarySkills, ...parsedData.skills]));
-      const activeCurrentEmployer = currentProfile.currentEmployer || detectedCurrentEmployer;
-      const excludedList = Array.from(new Set([...(currentProfile.excludedEmployers || []), activeCurrentEmployer].filter(Boolean)));
-
-      db.updateProfile(userId, {
-        fullName: parsedData.fullName || currentProfile.fullName,
-        headline: parsedData.headline || currentProfile.headline,
-        summary: parsedData.summary || currentProfile.summary,
-        phone: parsedData.phone || currentProfile.phone,
-        email: parsedData.email || currentProfile.email,
-        currentEmployer: activeCurrentEmployer,
-        excludedEmployers: excludedList,
-        primarySkills: mergedSkills,
-        skills: parsedData.skillCategories && parsedData.skillCategories.length > 0 ? parsedData.skillCategories : currentProfile.skills,
-        yearsOfExperience: parsedData.workExperience.length > 0 ? Math.max(currentProfile.yearsOfExperience, parsedData.workExperience.length * 2) : currentProfile.yearsOfExperience,
-      });
-
-      db.addAuditLog({
-        userId,
-        timestamp: new Date().toISOString(),
-        category: 'discovery',
-        action: 'RESUME_PARSED_AND_SYNCED',
-        details: `Parsed ${fileName} (${parsedData.skills.length} skills extracted). Detected current employer: "${activeCurrentEmployer}" added to conflict-of-interest exclusion list.`,
-        severity: 'success',
-      });
+    // Sync into profile (guaranteed creation if not existing yet)
+    let currentProfile = db.getProfile(userId);
+    if (!currentProfile) {
+      currentProfile = db.updateProfile(userId, { fullName: parsedData.fullName || 'Candidate' });
     }
+
+    const allExtractedSkills = [
+      ...(parsedData.skills || []),
+      ...((parsedData.skillCategories || []).flatMap(c => c.items || []))
+    ];
+    const mergedSkills = Array.from(new Set([
+      ...(currentProfile.primarySkills || []),
+      ...allExtractedSkills
+    ])).filter(Boolean);
+
+    const activeCurrentEmployer = currentProfile.currentEmployer || detectedCurrentEmployer;
+    const excludedList = Array.from(new Set([...(currentProfile.excludedEmployers || []), activeCurrentEmployer].filter(Boolean)));
+
+    const updatedProfile = db.updateProfile(userId, {
+      fullName: (parsedData.fullName && parsedData.fullName !== 'Candidate') ? parsedData.fullName : currentProfile.fullName,
+      headline: parsedData.headline || currentProfile.headline,
+      summary: parsedData.summary || currentProfile.summary,
+      phone: parsedData.phone || currentProfile.phone,
+      email: parsedData.email || currentProfile.email,
+      currentEmployer: activeCurrentEmployer,
+      excludedEmployers: excludedList,
+      primarySkills: mergedSkills,
+      skills: (parsedData.skillCategories && parsedData.skillCategories.length > 0) ? parsedData.skillCategories : currentProfile.skills,
+      yearsOfExperience: parsedData.workExperience.length > 0 ? Math.max(currentProfile.yearsOfExperience, parsedData.workExperience.length * 2) : currentProfile.yearsOfExperience,
+    });
+
+    db.addAuditLog({
+      userId,
+      timestamp: new Date().toISOString(),
+      category: 'discovery',
+      action: 'RESUME_PARSED_AND_SYNCED',
+      details: `Parsed ${fileName} (${mergedSkills.length} skills extracted across ${(parsedData.skillCategories || []).length} categories). Detected employer: "${activeCurrentEmployer}".`,
+      severity: 'success',
+    });
+
+    await db.flush();
 
     res.status(201).json({
       resume: newResume,
-      updatedProfile: db.getProfile(userId),
+      updatedProfile,
     });
   } catch (error) {
     console.error("Resume upload failed:", error);

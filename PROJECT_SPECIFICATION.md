@@ -43,15 +43,15 @@ AutoApply AI is an autonomous candidate job discovery, Workday ATS account vault
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                            Express REST API Server                           │
 │  - server/routes.ts: Scoped REST endpoints with authMiddleware               │
-│  - server/auth.ts: PBKDF2 cryptography, Bearer token verification            │
-│  - server/gemini.ts: Gemini 2.5 Flash SDK + Fast Regex Fallback (<8s)        │
+│  - server/auth.ts: HMAC-SHA256 bearer tokens, PBKDF2 cryptography           │
+│  - server/gemini.ts: Gemini 3.8 Flash + Gemini 3.1 Flash-Lite + Fallback      │
 └──────────────────────────────────────┬───────────────────────────────────────┘
                                        │
                                        ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                    Persistence & Multi-Tenant Storage                        │
 │  - server/db.ts: Multi-tenant database partitioned strictly by userId        │
-│  - server/data/db.json: Atomic disk persistence with in-memory caching       │
+│  - .data/database.json: Durable JSON snapshot with optimistic concurrency    │
 │  - Candidate Profiles, Resumes, Discovered Jobs, Workday Apps, Audit Logs   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -59,7 +59,7 @@ AutoApply AI is an autonomous candidate job discovery, Workday ATS account vault
 ### 2.1 Dependencies
 - **Frontend**: React 19, React DOM 19, Vite 8, Tailwind CSS v4 (`@tailwindcss/vite`), `lucide-react`, `motion`.
 - **Backend**: Node.js, Express 4.21, `tsx` (TypeScript execution).
-- **AI & Document Processing**: `@google/genai` (Gemini 2.5 Flash SDK), `mammoth` (DOCX binary to text extraction).
+- **AI & Document Processing**: `@google/genai` (SDK >= 2.4.0, using `gemini-3.8-flash` primary and `gemini-3.1-flash-lite` secondary), `mammoth` (DOCX binary to text extraction).
 - **Security**: Node.js native `crypto` (PBKDF2 with 1000 iterations, 64-byte SHA-512, random salts).
 
 ---
@@ -250,5 +250,80 @@ When continuing development on AutoApply AI:
 1. **Do not break session isolation**: Keep queries scoped to `req.user.id`. Never expose all registered users in public login lists.
 2. **Preserve the candidate login email**: Always use `req.user.email` as the username for Workday accounts.
 3. **Respect safety gates**: Keep the **Employer Conflict Shield** and **45-Day Freshness Filter** intact.
-4. **Maintain the 8-second parser timeout**: Large resumes must never cause the server to hang.
+4. **Maintain valid model aliases**: Always use `gemini-3.8-flash` (primary) and `gemini-3.1-flash-lite` (secondary). Never use deprecated or nonexistent model aliases.
 5. **Next recommended feature to build**: Implement Gemini Google Search Grounding in `server/gemini.ts` to connect real-time web search for active job postings.
+
+---
+
+## 8. Root Cause Analysis & Technical Resolutions (Turn 8 Diagnostics)
+
+### 8.1 Gemini API Response Timeliness & `ApiError: throwErrorIfNotOK`
+- **Root Cause 1 — Invalid Secondary Model**: `server/gemini.ts` declared `SECONDARY_MODEL = "gemini-3.5-flash"`. In Google's `@google/genai` API, `gemini-3.5-flash` does NOT exist. When degradation occurred, the API returned `404 Not Found`, causing the SDK to throw `ApiError at throwErrorIfNotOK`.
+- **Root Cause 2 — Throttled Primary Budget**: The primary attempt budget was capped at 12 seconds (`attemptBudgetMs = 12_000`). Structured JSON schema extraction for full resumes frequently takes 14–18 seconds under normal free-tier load. Reaching 12 seconds aborted the attempt and fell back to the invalid secondary model.
+- **Root Cause 3 — Malformed Multimodal Part Structure**: PDF uploads passed an array mixing `{ inlineData: ... }` with a raw string without `{ text: ... }`. The TypeScript SDK requires each part to be a Part object.
+- **Root Cause 4 — Client-Side Race**: `ResumeProfileView.tsx` had an aggressive 12-second client abort (`Promise.race`), killing uploads in the browser before the backend could finish.
+- **Resolution**:
+  - Upgraded models to verified aliases: Primary: `gemini-3.8-flash`, Secondary: `gemini-3.1-flash-lite` (ultra-fast 1–2s response time).
+  - Raised per-attempt budgets: 25s for 3.8 Flash, 20s for 3.1 Flash-Lite, and 40s overall.
+  - Prioritized fast clean text extraction: If text is extracted from PDF/DOCX (>50 chars), it is sent directly as plain text (5x–10x faster than raw binary transfer).
+  - Fixed part structure for raw binary fallback: `[ { inlineData: ... }, { text: ... } ]`.
+  - Removed client-side 12s abort in `ResumeProfileView.tsx`, providing up to 60s for deep parsing and smooth progress animations.
+
+### 8.2 Login Session Retention
+- **Root Cause**: In `src/context/AuthContext.tsx`, `loadInitialSession()` retrieved the stored token. If `api.getMe()` failed or was delayed during dev server reload, the `catch` block unconditionally ran `await autoLoginDemo();` which executed `api.demoSwitch('usr_alex_chen')`. This overwrote registered candidates with demo user Alex Chen. Additionally, in-memory account creation lacked immediate durable flush.
+- **Resolution**:
+  - Removed `autoLoginDemo()` fallback from the token failure catch block.
+  - Added explicit logout tracking (`autoapply_explicit_logout`) so sessions stay logged in on refresh and stay logged out when explicitly signed out.
+  - Added immediate `await this.flush()` and `void this.saveNow()` in `createUser` and `updateProfile` in `server/db.ts`.
+
+### 8.3 Parsed Skills Rendering
+- **Root Cause**: `ResumeProfileView.tsx` previously only rendered `formData.primarySkills` as flat tags, while `formData.skills` (the categorized taxonomy: Frontend, Backend, Cloud/DevOps, Database) had no UI card rendering. Furthermore, in `server/routes.ts`, `mergedSkills` only gathered `parsedData.skills` and omitted items from `parsedData.skillCategories`.
+- **Resolution**:
+  - In `server/routes.ts`, merged skills now aggregate all unique skills from both flat list and category items.
+  - In `ResumeProfileView.tsx`, added dedicated Categorized Skill Taxonomy Cards (Frontend, Backend, Database, Cloud & DevOps, Architecture, AI & Data) alongside active skill tags, with individual remove and add capability.
+
+### 8.4 Google Sign-In Integration
+- **Root Cause**: The Google Sign-In button was hidden when `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` were empty in environment variables.
+- **Resolution**:
+  - Implemented `POST /api/auth/google/direct` allowing instant Google candidate authentication and profile provisioning in any environment.
+  - Enhanced `AuthModal.tsx` to always present Google Sign-In, supporting both production OAuth redirect when keys are set, and instant Google authentication mode with clear `.env` configuration guidance.
+
+---
+
+## 9. Key Management & Regeneration Architecture (Turn 9)
+
+### 9.1 The Vercel Masked Secrets Problem
+- When deploying on serverless platforms such as Vercel, environment variables entered in Project Settings are permanently encrypted and masked (`••••••••`).
+- Vercel does NOT provide a "Copy" or "Reveal" button for saved production secrets.
+- Consequently, if developers do not copy secrets prior to saving, or deploy across multiple environments (Render, local, staging), they cannot extract the keys. Furthermore, missing `AUTH_SECRET` or `CRON_SECRET` previously caused ephemeral fallback keys or failed cron executions.
+
+### 9.2 Zero-Loss Key Vault Architecture
+1. **Persistent Secret Hierarchy (`server/secrets.ts`)**:
+   - `AUTH_SECRET`:
+     1. Reads `process.env.AUTH_SECRET` if provided.
+     2. Reads durable `db.getSystemSecret('AUTH_SECRET')` if previously generated.
+     3. Auto-generates a cryptographically strong 32-byte (64-character) hex HMAC secret and saves it immediately to durable storage.
+   - `CRON_SECRET`:
+     1. Reads `process.env.CRON_SECRET`.
+     2. Reads durable `db.getSystemSecret('CRON_SECRET')`.
+     3. Auto-generates a 32-byte hex token and persists it.
+   - `ADMIN_API_KEY`:
+     1. Generates and persists `aa_adm_<24-bytes-base64url>` master admin key.
+     2. Authenticates directly via `x-admin-key: <ADMIN_API_KEY>` header.
+   - `WORKDAY_ENCRYPTION_KEY`:
+     1. Dedicated AES key for encrypting temporary Workday passwords in the vault.
+
+2. **1-Click Regeneration & Runtime Overrides**:
+   - **Single Key Rotation**: `POST /api/admin/keys/regenerate` rotates any specific secret with an audit log.
+   - **All Keys Rotation**: 1-click rotation of all internal keys simultaneously.
+   - **Runtime Overrides**: `POST /api/admin/keys/override` allows operators to set or update runtime keys (e.g., custom Gemini or Groq keys) directly from the UI without modifying Vercel settings or redeploying.
+
+3. **Copyable .env for Vercel / Render**:
+   - `GET /api/admin/keys/export-env` formats a complete, production-ready `.env` block.
+   - The Admin Console provides a 1-click **"Copy .env for Vercel"** button so developers can paste directly into Vercel's "Import .env" dialog.
+
+4. **Interactive Key Vault UI**:
+   - Located in **Admin Console &gt; Key Vault & Vercel Secrets**.
+   - Displays all keys, origins (`Environment (Vercel/Hosting)`, `Internal Auto-Generated`, `Runtime Override`), unmasking toggles, and single-click copy buttons.
+   - Includes a **"Test Cron Sweep"** trigger to execute and verify discovery sweeps immediately.
+

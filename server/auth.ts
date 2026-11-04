@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import { db } from './db.js';
 import { User } from './types.js';
+import { getAuthSecret, getAdminApiKey } from './secrets.js';
 
 // Extend Express Request to include user
 declare global {
@@ -23,13 +24,7 @@ declare global {
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 
 function authSecret(): string {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) {
-    // Dev convenience only — production MUST set AUTH_SECRET (e.g. in Vercel env vars).
-    console.warn("[auth] AUTH_SECRET not set — falling back to an ephemeral dev secret. Sessions reset on redeploy.");
-    return 'dev-only-insecure-secret-' + (process.env.NODE_ENV || 'development');
-  }
-  return secret;
+  return getAuthSecret();
 }
 
 function base64url(input: Buffer | string): string {
@@ -83,6 +78,17 @@ export function revokeToken(_token: string): void {
 }
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+  // Support Administrative Master Key bypass (for scripts, curl, health checks)
+  const adminKeyHeader = req.headers['x-admin-key'];
+  if (adminKeyHeader && typeof adminKeyHeader === 'string' && adminKeyHeader.trim() === getAdminApiKey()) {
+    const adminUser = db.findUserById('usr_admin') || db.getAllUsersPublic().find(u => u.role === 'admin');
+    if (adminUser) {
+      req.user = db.findUserById(adminUser.id);
+      next();
+      return;
+    }
+  }
+
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });

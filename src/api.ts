@@ -7,6 +7,8 @@ import {
   AgentRunLog,
   AdminTenantSummary,
   AdminPlatformStats,
+  SystemKeysResponse,
+  SystemKeyInfo,
 } from './types';
 
 const TOKEN_KEY = 'autoapply_auth_token';
@@ -108,7 +110,17 @@ export const api = {
     }
   },
 
-  async register(name: string, email: string, password: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {    const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/register', {
+  async loginGoogleDirect(email: string, name?: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {
+    const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/google/direct', {
+      method: 'POST',
+      body: JSON.stringify({ email, name }),
+    });
+    setStoredToken(res.token);
+    return res;
+  },
+
+  async register(name: string, email: string, password: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {
+    const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({ name, email, password }),
     });
@@ -348,5 +360,59 @@ export const api = {
 
   async getApplications(): Promise<WorkdayApplication[]> {
     return fetchWithAuth('/api/applications');
+  },
+
+  // Key Management & Regeneration
+  async getAdminKeys(): Promise<SystemKeysResponse> {
+    return fetchWithAuth('/api/admin/keys');
+  },
+
+  async regenerateAdminKey(keyName: 'AUTH_SECRET' | 'CRON_SECRET' | 'ADMIN_API_KEY' | 'WORKDAY_ENCRYPTION_KEY' | 'ALL'): Promise<{
+    success: boolean;
+    regenerated: Record<string, string>;
+    keys: SystemKeyInfo[];
+    envExport: string;
+    message: string;
+  }> {
+    return fetchWithAuth('/api/admin/keys/regenerate', {
+      method: 'POST',
+      body: JSON.stringify({ keyName }),
+    });
+  },
+
+  async overrideAdminKey(keyName: string, value: string): Promise<{
+    success: boolean;
+    keys: SystemKeyInfo[];
+    envExport: string;
+    message: string;
+  }> {
+    return fetchWithAuth('/api/admin/keys/override', {
+      method: 'POST',
+      body: JSON.stringify({ keyName, value }),
+    });
+  },
+
+  async getEnvExport(): Promise<{ envFileContent: string }> {
+    return fetchWithAuth('/api/admin/keys/export-env');
+  },
+
+  async triggerManualSweep(): Promise<{
+    success: boolean;
+    summary: { swept: number; results: { poolKey: string; jobsFound: number; error?: string }[] };
+    totalFound: number;
+  }> {
+    return fetchWithAuth('/api/admin/cron/trigger-now', {
+      method: 'POST',
+    });
+  },
+
+  async getCandidateApiKey(): Promise<{ apiKey: string; userId: string }> {
+    return fetchWithAuth('/api/profile/api-key');
+  },
+
+  async regenerateCandidateApiKey(): Promise<{ success: boolean; apiKey: string }> {
+    return fetchWithAuth('/api/profile/api-key/regenerate', {
+      method: 'POST',
+    });
   },
 };

@@ -248,3 +248,22 @@ export interface AdminPlatformStats {
   totalCredentialsProvisioned: number;
   activeSessions: number;
 }
+
+export interface SystemKeyInfo {
+  name: string;
+  label: string;
+  category: 'auth' | 'automation' | 'admin' | 'ai' | 'oauth' | 'database';
+  isSet: boolean;
+  source: 'Environment (Vercel/Hosting)' | 'Internal Auto-Generated' | 'Runtime Override' | 'Not Configured';
+  isRegenerable: boolean;
+  maskedPreview: string;
+  fullValue?: string;
+  description: string;
+  usageGuide: string;
+}
+
+export interface SystemKeysResponse {
+  keys: SystemKeyInfo[];
+  envExport: string;
+  activeAdminApiKey: string;
+}

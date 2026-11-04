@@ -18,10 +18,18 @@ import {
   ExternalLink,
   ChevronRight,
   Sparkles,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  RotateCcw,
+  Sliders,
+  Play,
+  Terminal,
 } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
-import { AdminTenantSummary, AdminPlatformStats, SystemAuditLog } from '../types';
+import { AdminTenantSummary, AdminPlatformStats, SystemAuditLog, SystemKeyInfo } from '../types';
 import { RelevanceAuditHub } from './RelevanceAuditHub';
 import { DocsDeploymentView } from './DocsDeploymentView';
 
@@ -31,7 +39,7 @@ interface AdminConsoleViewProps {
 
 export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTenant }) => {
   const { user } = useAuth();
-  const [activeAdminSubTab, setActiveAdminSubTab] = useState<'tenants' | 'audit' | 'safeguards' | 'relevance' | 'deployment'>('tenants');
+  const [activeAdminSubTab, setActiveAdminSubTab] = useState<'tenants' | 'audit' | 'safeguards' | 'relevance' | 'deployment' | 'keys'>('tenants');
   const [tenants, setTenants] = useState<AdminTenantSummary[]>([]);
   const [stats, setStats] = useState<AdminPlatformStats | null>(null);
   const [auditLogs, setAuditLogs] = useState<SystemAuditLog[]>([]);
@@ -40,20 +48,36 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
+  // Key Vault States
+  const [systemKeys, setSystemKeys] = useState<SystemKeyInfo[]>([]);
+  const [envExport, setEnvExport] = useState<string>('');
+  const [revealedKeys, setRevealedKeys] = useState<Set<string>>(new Set());
+  const [copiedKeyName, setCopiedKeyName] = useState<string | null>(null);
+  const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
+  const [overrideModalKey, setOverrideModalKey] = useState<SystemKeyInfo | null>(null);
+  const [overrideValue, setOverrideValue] = useState<string>('');
+  const [manualSweepRunning, setManualSweepRunning] = useState<boolean>(false);
+  const [sweepResultSummary, setSweepResultSummary] = useState<string | null>(null);
+
   const loadAdminData = async () => {
     setIsLoading(true);
     try {
-      const [tenantsData, statsData, logsData] = await Promise.all([
+      const [tenantsData, statsData, logsData, keysData] = await Promise.all([
         api.getAdminTenants().catch((e) => { console.error('tenants load failed:', e); return []; }),
         api.getAdminStats().catch((e) => { console.error('stats load failed:', e); return null; }),
         api.getAuditLogs().catch((e) => { console.error('audit load failed:', e); return []; }),
+        api.getAdminKeys().catch((e) => { console.error('keys load failed:', e); return null; }),
       ]);
       setTenants(tenantsData);
       setStats(statsData);
       setAuditLogs(logsData);
+      if (keysData) {
+        setSystemKeys(keysData.keys);
+        setEnvExport(keysData.envExport);
+      }
       if (!statsData) setActionSuccess('Failed to load platform stats — retry shortly.');
       else if (tenantsData.length === 0) setActionSuccess('No candidates registered yet.');
-      else setActionSuccess(`Loaded ${tenantsData.length} registered accounts.`);
+      else setActionSuccess(`Loaded ${tenantsData.length} registered accounts and ${keysData?.keys.length || 0} system keys.`);
     } catch (err) {
       console.error("Admin data load error:", err);
     } finally {
@@ -73,6 +97,83 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
+  };
+
+  const handleToggleRevealKey = (keyName: string) => {
+    setRevealedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(keyName)) next.delete(keyName);
+      else next.add(keyName);
+      return next;
+    });
+  };
+
+  const handleCopyKey = (keyName: string, valueToCopy?: string) => {
+    if (!valueToCopy) return;
+    navigator.clipboard.writeText(valueToCopy);
+    setCopiedKeyName(keyName);
+    setTimeout(() => setCopiedKeyName(null), 2500);
+  };
+
+  const handleCopyEnvExport = () => {
+    if (!envExport) return;
+    navigator.clipboard.writeText(envExport);
+    setCopiedKeyName('ENV_EXPORT');
+    setTimeout(() => setCopiedKeyName(null), 2500);
+  };
+
+  const handleRegenerateKey = async (keyName: 'AUTH_SECRET' | 'CRON_SECRET' | 'ADMIN_API_KEY' | 'WORKDAY_ENCRYPTION_KEY' | 'ALL') => {
+    const isRotatingAuth = keyName === 'AUTH_SECRET' || keyName === 'ALL';
+    if (isRotatingAuth) {
+      const confirmed = window.confirm(
+        'Warning: Regenerating AUTH_SECRET will immediately rotate the HMAC signing secret. All currently active user sessions will be logged out and required to sign in again. Continue?'
+      );
+      if (!confirmed) return;
+    }
+
+    setRegeneratingKey(keyName);
+    try {
+      const res = await api.regenerateAdminKey(keyName);
+      setSystemKeys(res.keys);
+      setEnvExport(res.envExport);
+      setActionSuccess(`Successfully regenerated key(s): ${Object.keys(res.regenerated).join(', ')}. Stored in persistent database.`);
+      // Reveal the regenerated key automatically
+      setRevealedKeys((prev) => new Set([...prev, ...Object.keys(res.regenerated)]));
+      setTimeout(() => setActionSuccess(null), 5000);
+    } catch (err) {
+      alert('Failed to regenerate key: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setRegeneratingKey(null);
+    }
+  };
+
+  const handleTriggerManualSweep = async () => {
+    setManualSweepRunning(true);
+    setSweepResultSummary(null);
+    try {
+      const res = await api.triggerManualSweep();
+      setSweepResultSummary(`Manual sweep executed successfully! Swept ${res.summary.swept} pool(s), found ${res.totalFound} new active listings.`);
+      await loadAdminData();
+    } catch (err) {
+      setSweepResultSummary('Manual sweep failed: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setManualSweepRunning(false);
+    }
+  };
+
+  const handleSaveOverride = async () => {
+    if (!overrideModalKey) return;
+    try {
+      const res = await api.overrideAdminKey(overrideModalKey.name, overrideValue);
+      setSystemKeys(res.keys);
+      setEnvExport(res.envExport);
+      setActionSuccess(`Runtime override for ${overrideModalKey.name} saved successfully.`);
+      setOverrideModalKey(null);
+      setOverrideValue('');
+      setTimeout(() => setActionSuccess(null), 4000);
+    } catch (err) {
+      alert('Failed to save override: ' + (err instanceof Error ? err.message : String(err)));
+    }
   };
 
   const filteredLogs = auditLogs.filter(log => {
@@ -266,6 +367,18 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
         >
           <Server className="w-4 h-4 text-emerald-400" />
           <span>Free Hosting & DB Specs</span>
+        </button>
+
+        <button
+          onClick={() => setActiveAdminSubTab('keys')}
+          className={`px-4 py-2.5 text-xs font-semibold rounded-t-lg transition-colors whitespace-nowrap flex items-center gap-2 ${
+            activeAdminSubTab === 'keys'
+              ? 'bg-slate-900 text-white border-t-2 border-amber-500 border-x border-slate-800'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <KeyRound className="w-4 h-4 text-amber-400" />
+          <span>Key Vault & Vercel Secrets ({systemKeys.length})</span>
         </button>
       </div>
 
@@ -538,6 +651,268 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
       {/* Tab 5: Free Deployment & Specs */}
       {activeAdminSubTab === 'deployment' && (
         <DocsDeploymentView />
+      )}
+
+      {/* Tab 6: Key Vault & Vercel Secrets Management */}
+      {activeAdminSubTab === 'keys' && (
+        <div className="space-y-6">
+          {/* Vercel Masked Secret Notice Banner */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-950/50 via-slate-900 to-indigo-950/40 border border-amber-800/40 shadow-xl">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-white flex items-center gap-2">
+                    <span>Vercel Secret Recovery & Key Regeneration Vault</span>
+                    <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      Zero-Loss Architecture
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
+                    Cloud platforms like Vercel mask environment variables after saving (<code className="text-amber-300 font-mono">••••••••</code>) and do not allow copying them back out. If you lack copied keys, AutoApply AI maintains persistent cryptographically generated keys in durable storage. You can regenerate individual or all keys at any time, unmask values, or click <strong className="text-white">Copy .env for Vercel</strong> to paste directly into your Vercel Project Settings.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleRegenerateKey('ALL')}
+                  disabled={regeneratingKey === 'ALL'}
+                  className="px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-amber-950 transition-colors"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${regeneratingKey === 'ALL' ? 'animate-spin' : ''}`} />
+                  <span>{regeneratingKey === 'ALL' ? 'Rotating Keys...' : 'Regenerate All App Keys'}</span>
+                </button>
+                <button
+                  onClick={handleCopyEnvExport}
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-indigo-950 transition-colors"
+                >
+                  {copiedKeyName === 'ENV_EXPORT' ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-300" />
+                      <span className="text-emerald-300">Copied Full .env!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>Copy .env for Vercel</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={handleTriggerManualSweep}
+                  disabled={manualSweepRunning}
+                  className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs flex items-center gap-2 border border-slate-700 transition-colors"
+                >
+                  <Play className={`w-3.5 h-3.5 text-emerald-400 ${manualSweepRunning ? 'animate-pulse' : ''}`} />
+                  <span>{manualSweepRunning ? 'Running Sweep...' : 'Test Cron Sweep'}</span>
+                </button>
+              </div>
+            </div>
+
+            {sweepResultSummary && (
+              <div className="mt-4 p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-xs text-slate-300 flex items-center gap-2">
+                <Terminal className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span className="font-mono text-emerald-300">{sweepResultSummary}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Key Inventory Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {systemKeys.map((k) => {
+              const isRevealed = revealedKeys.has(k.name);
+              const displayVal = isRevealed && k.fullValue ? k.fullValue : k.maskedPreview;
+              const isCopied = copiedKeyName === k.name;
+              const isThisRegenerating = regeneratingKey === k.name;
+
+              return (
+                <div
+                  key={k.name}
+                  className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-md flex flex-col justify-between space-y-4 hover:border-slate-700 transition-colors"
+                >
+                  <div>
+                    {/* Header: Name and Status */}
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-white bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                            {k.name}
+                          </span>
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
+                              k.source.includes('Environment')
+                                ? 'bg-indigo-950/60 text-indigo-300 border-indigo-800'
+                                : k.source.includes('Internal')
+                                ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
+                                : k.source.includes('Runtime')
+                                ? 'bg-purple-950/60 text-purple-300 border-purple-800'
+                                : 'bg-slate-800 text-slate-400 border-slate-700'
+                            }`}
+                          >
+                            {k.source}
+                          </span>
+                        </div>
+                        <h3 className="text-sm font-semibold text-slate-200 mt-1.5">{k.label}</h3>
+                      </div>
+                      <span className="text-[10px] uppercase font-mono text-slate-400 tracking-wider">
+                        {k.category}
+                      </span>
+                    </div>
+
+                    <p className="text-xs text-slate-400 mt-2 leading-relaxed">{k.description}</p>
+
+                    {/* Value Container with Reveal and Copy */}
+                    <div className="mt-3 p-2.5 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between gap-2">
+                      <div className="font-mono text-xs text-slate-200 truncate select-all">
+                        {displayVal}
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        {k.fullValue && (
+                          <button
+                            onClick={() => handleToggleRevealKey(k.name)}
+                            title={isRevealed ? 'Hide secret value' : 'Show secret value'}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                          >
+                            {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleCopyKey(k.name, k.fullValue || (k.isSet ? k.maskedPreview : undefined))}
+                          title="Copy key value"
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                        >
+                          {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions & Guide Footer */}
+                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-slate-400 truncate max-w-[200px]" title={k.usageGuide}>
+                      {k.usageGuide}
+                    </span>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => {
+                          setOverrideModalKey(k);
+                          setOverrideValue(k.fullValue || '');
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium flex items-center gap-1.5 transition-colors"
+                      >
+                        <Sliders className="w-3 h-3 text-indigo-400" />
+                        <span>Override</span>
+                      </button>
+
+                      {k.isRegenerable && (
+                        <button
+                          onClick={() => handleRegenerateKey(k.name as any)}
+                          disabled={isThisRegenerating}
+                          className="px-2.5 py-1.5 rounded-lg bg-amber-950/60 hover:bg-amber-900/60 text-amber-300 border border-amber-800 text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        >
+                          <RotateCcw className={`w-3 h-3 ${isThisRegenerating ? 'animate-spin' : ''}`} />
+                          <span>{isThisRegenerating ? 'Rotating...' : 'Regenerate'}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Formatted .env Export Section for Vercel */}
+          <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <Terminal className="w-4 h-4 text-indigo-400" />
+                  <span>Ready-to-Paste Vercel & Render .env Block</span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Copy this exact block into <strong className="text-slate-200">Vercel Project Settings &gt; Environment Variables</strong> (via Paste / Import .env) or your local <code className="text-indigo-300">.env</code> file.
+                </p>
+              </div>
+
+              <button
+                onClick={handleCopyEnvExport}
+                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex items-center gap-2 self-start sm:self-auto shadow-md shadow-indigo-950 transition-colors"
+              >
+                {copiedKeyName === 'ENV_EXPORT' ? (
+                  <>
+                    <Check className="w-4 h-4 text-emerald-300" />
+                    <span>Copied Block!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    <span>Copy Full Block</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-emerald-400 overflow-x-auto leading-relaxed max-h-72 select-all">
+              {envExport || '# Loading active environment configuration...'}
+            </pre>
+          </div>
+
+          {/* Runtime Key Override Modal */}
+          {overrideModalKey && (
+            <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-lg rounded-2xl bg-slate-900 border border-slate-800 p-6 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Sliders className="w-4 h-4 text-indigo-400" />
+                    <span>Set Runtime Secret: {overrideModalKey.name}</span>
+                  </h3>
+                  <button
+                    onClick={() => setOverrideModalKey(null)}
+                    className="text-slate-400 hover:text-white text-xs font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  Enter a new value for <code className="text-amber-300 font-mono">{overrideModalKey.name}</code>. This will be persisted to the database immediately and will take effect at runtime without rebuilding or modifying Vercel.
+                </p>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-400">Secret Value:</label>
+                  <input
+                    type="text"
+                    value={overrideValue}
+                    onChange={(e) => setOverrideValue(e.target.value)}
+                    placeholder={`Enter value for ${overrideModalKey.name}...`}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white font-mono text-xs focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2">
+                  <button
+                    onClick={() => setOverrideModalKey(null)}
+                    className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                  >
+                    Close
+                  </button>
+                  <button
+                    onClick={handleSaveOverride}
+                    disabled={!overrideValue.trim()}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-semibold"
+                  >
+                    Save &amp; Apply Secret
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

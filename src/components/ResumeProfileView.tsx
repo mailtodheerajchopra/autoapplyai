@@ -88,20 +88,24 @@ export const ResumeProfileView: React.FC<ResumeProfileViewProps> = ({
           setParsingStage('AI parsing skills, experience, and employer conflict shield...');
           setParseProgress(70);
 
-          // Client safeguard timeout of 12 seconds
+          // Allow reasonable network budget (60s) for deep multimodal / ATS analysis
           const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("Document processing took longer than expected")), 12000)
+            setTimeout(() => reject(new Error("Document parsing timed out on server. Please try again.")), 60000)
           );
 
-          await Promise.race([uploadPromise, timeoutPromise]);
+          const uploadResult = (await Promise.race([uploadPromise, timeoutPromise])) as any;
 
-          setParsingStage('Synchronizing master candidate profile...');
+          setParsingStage('Synchronizing master candidate profile & skills...');
           setParseProgress(95);
+
+          if (uploadResult?.updatedProfile) {
+            setFormData(uploadResult.updatedProfile);
+          }
 
           await onRefreshResumes();
           await refreshProfile();
           setParseProgress(100);
-          setParsingStage('Resume parsed successfully!');
+          setParsingStage('Resume and skills extracted successfully!');
           setSaveSuccess(true);
           setTimeout(() => {
             setSaveSuccess(false);
@@ -447,38 +451,82 @@ Principal DevOps & Cloud Infrastructure Engineer with 9+ years experience archit
       </div>
 
       {/* Extracted Skills & Category Breakdown */}
-      <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
-        <div className="flex items-center justify-between">
+      <div className="p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold text-white flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-indigo-400" />
-              Extracted Skill Taxonomy
+              Extracted Skills &amp; ATS Taxonomy
             </h2>
             <p className="text-xs text-slate-400">
-              These skills are matched against incoming job postings on LinkedIn, Naukri, and Workday portals.
+              Extracted directly from your resume and matched against incoming job postings on LinkedIn, Naukri, and Workday portals.
             </p>
           </div>
-          <span className="text-xs font-mono tabular-nums text-slate-400">
-            {formData.primarySkills.length} Primary Skills
+          <span className="text-xs font-mono tabular-nums px-2.5 py-1 rounded bg-indigo-950/60 border border-indigo-800/60 text-indigo-300 self-start sm:self-auto">
+            {formData.primarySkills.length} Total Extracted Skills
           </span>
         </div>
 
-        {/* Skill tags */}
-        <div className="flex flex-wrap gap-1.5">
-          {formData.primarySkills.map((skill) => (
-            <span
-              key={skill}
-              className="px-2.5 py-1 rounded bg-slate-950 border border-slate-800 text-xs text-slate-200 flex items-center gap-1.5"
-            >
-              <span>{skill}</span>
-              <button
-                onClick={() => removeSkill(skill)}
-                className="text-slate-400 hover:text-rose-400 text-xs"
+        {/* Categorized Skills Breakdown (if available) */}
+        {formData.skills && formData.skills.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+            {formData.skills.map((catGroup, idx) => (
+              <div
+                key={catGroup.category || idx}
+                className="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800/80 space-y-2"
               >
-                ×
-              </button>
-            </span>
-          ))}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-indigo-300 uppercase tracking-wider">
+                    {catGroup.category}
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    {(catGroup.items || []).length}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {(catGroup.items || []).map((item) => (
+                    <span
+                      key={item}
+                      className="px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-[11px] text-slate-200"
+                    >
+                      {item}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Flat Primary Skills List */}
+        <div className="space-y-2 pt-1">
+          <label className="text-xs font-medium text-slate-300 flex items-center justify-between">
+            <span>Primary Active Skill Tags</span>
+            <span className="text-[11px] text-slate-500 font-normal">Click × on any tag to remove</span>
+          </label>
+          <div className="flex flex-wrap gap-1.5 min-h-[42px] p-2 rounded-xl bg-slate-950/50 border border-slate-800/80">
+            {formData.primarySkills.length === 0 ? (
+              <span className="text-xs text-slate-500 italic p-1">
+                No skills detected yet. Upload a resume above or type skills below to add manually.
+              </span>
+            ) : (
+              formData.primarySkills.map((skill) => (
+                <span
+                  key={skill}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800/90 border border-slate-700/60 text-xs text-slate-200 flex items-center gap-1.5 transition-colors"
+                >
+                  <span>{skill}</span>
+                  <button
+                    onClick={() => removeSkill(skill)}
+                    className="text-slate-400 hover:text-rose-400 text-xs leading-none"
+                    title={`Remove ${skill}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))
+            )}
+          </div>
         </div>
 
         {/* Add custom skill */}
@@ -488,15 +536,15 @@ Principal DevOps & Cloud Infrastructure Engineer with 9+ years experience archit
             value={newSkillInput}
             onChange={(e) => setNewSkillInput(e.target.value)}
             placeholder="Add new skill (e.g. GraphQL, Kubernetes)..."
-            className="flex-1 h-8 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+            className="flex-1 h-8 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
             onKeyDown={(e) => e.key === 'Enter' && addSkill()}
           />
           <button
             onClick={addSkill}
-            className="h-8 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 flex items-center gap-1"
+            className="h-8 px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-200 flex items-center gap-1 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
-            <span>Add</span>
+            <span>Add Skill</span>
           </button>
         </div>
       </div>
