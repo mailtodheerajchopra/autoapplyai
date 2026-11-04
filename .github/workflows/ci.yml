@@ -15,7 +15,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 24 ships npm 11, which tolerates missing optional-peer entries
+          # (@emnapi/* via @napi-rs/wasm-runtime) that npm 10 rejects during `npm ci`.
+          # Keep in sync with the maintainers' dev Node version.
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
