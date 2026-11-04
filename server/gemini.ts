@@ -129,32 +129,57 @@ async function generateWithModelChain(params: {
 /**
  * Fast helper to extract clean ASCII/UTF-8 text from raw PDF / binary buffer
  */
+/**
+ * Strips PDF-extraction noise that both trips the moderation gate's false
+ * positives AND doubles as a prompt-smuggling carrier: control characters
+ * (form-feed page separators, etc.) become spaces; zero-width / bidi
+ * characters are REMOVED outright — a hostile payload embedded in invisible
+ * characters loses its channel before any parser or model ever sees it.
+ */
+function cleanExtractionNoise(text: string): string {
+  return (text || '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, ' ')
+    .replace(/[\u200B-\u200F\u202A-\u202E\u2060\u2064\uFEFF]/g, '')
+    .replace(/ {3,}/g, '  ')
+    .trim();
+}
+
 export function extractTextFromPdfOrBinary(content: string, isBase64: boolean): string {
   try {
-    if (!isBase64) return content;
+    if (!isBase64) return cleanExtractionNoise(content);
     const buffer = Buffer.from(content, 'base64');
     const raw = buffer.toString('latin1');
-    
-    // Look for text in parentheses (e.g. `(John Doe) Tj` in PDF stream)
+
+    // Look for text in parentheses (e.g. `(John Doe) Tj` in PDF stream).
+    // Threshold ≥2 (not >5): short PDFs carry few strings, and dropping their
+    // text entirely would silently skip moderation screening of visible
+    // injection phrasing embedded in them. Contents are length-capped and
+    // noise-cleaned, so a junk PDF just yields harmless word soup.
     const matches = raw.match(/\(([^()]{2,120})\)/g);
-    if (matches && matches.length > 5) {
+    if (matches && matches.length >= 2) {
       const extracted = matches
         .map(m => m.slice(1, -1).replace(/\\[rntbf]/g, ' '))
         .join(' ');
-      if (extracted.trim().length > 40) {
-        return extracted;
+      if (extracted.trim().length > 20) {
+        return cleanExtractionNoise(extracted);
       }
     }
 
-    // Secondary scan: extract readable alphanumeric character sequences
-    const words = raw.match(/[A-Za-z0-9+#./@_-]{2,}/g);
+    // Secondary scan: extract readable alphanumeric character sequences.
+    // Tokens are capped at 60 chars — embedded/compressed PDF streams decode
+    // into long base64-ish runs that would otherwise (a) trip the moderation
+    // blob rule as a false positive and (b) carry smuggled payloads.
+    const words = raw.match(/[A-Za-z0-9+#./@_-]{2,60}/g);
     if (words && words.length > 20) {
-      return words.join(' ');
+      return cleanExtractionNoise(words.join(' '));
     }
   } catch (e) {
     console.warn("Fast PDF text extraction fallback error:", e);
   }
-  return content;
+  // NEVER return the raw base64/binary as "text" — the moderation gate would
+  // (correctly) see one giant encoded blob. An empty extraction is fine: the
+  // parser handles the original bytes via the multimodal path.
+  return '';
 }
 
 /**
