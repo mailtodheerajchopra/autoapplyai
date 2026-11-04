@@ -31,10 +31,37 @@ function jobKey(j: Pick<JobPosting, 'userId' | 'company' | 'title'>): string {
   return `${j.userId}|${(j.company || '').trim().toLowerCase()}|${(j.title || '').trim().toLowerCase()}`;
 }
 
+/**
+ * Compare two durable-store version markers. Supabase returns timestamptz in
+ * `+00:00` spelling while we generate `Z` — compare instants, not strings.
+ */
+function sameStoreVersion(a: string | null, b: string | null): boolean {
+  if (!a || !b) return a === b;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return a === b;
+  return ta === tb;
+}
+
+/** Union of two id-keyed entity lists — `durable` entries win for shared ids. */
+function unionById<T extends { id: string }>(durable: T[], local: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const item of durable) if (item && item.id) byId.set(item.id, item);
+  for (const item of local) if (item && item.id && !byId.has(item.id)) byId.set(item.id, item);
+  return [...byId.values()];
+}
+
 class DatabaseService {
   private data: DatabaseSchema;
   private saveTimeout: NodeJS.Timeout | null = null;
   private store: StateStore;
+  /** Version marker of the durable snapshot this instance last observed. */
+  private storeVersion: string | null = null;
+  /**
+   * False when hydration could not verify the durable store — persistence is
+   * then refused so seed-era memory can never be flushed over the real row.
+   */
+  private storeVerified = false;
 
   constructor() {
     this.store = getStore();
@@ -43,99 +70,148 @@ class DatabaseService {
 
   /**
    * Pulls the persisted snapshot from the active store before serving traffic.
-   * Falls back to the seeded snapshot (and logs loudly) if the store is
-   * unreachable — the app must start even when storage is temporarily down.
+   *
+   * Durability contract (post-incident hardening): if the store cannot be
+   * read after bounded retries, the instance keeps serving the seed snapshot
+   * but is flagged unverified — saveNow() then REFUSES to persist, because
+   * flushing seed-era memory is exactly how a transient outage erases the
+   * durable row (stale memory + whole-snapshot upsert = last-write-wins wipe).
    */
   async hydrate(): Promise<void> {
-    try {
-      const stored = (await this.store.load()) as DatabaseSchema | null;
-      if (stored && typeof stored === 'object' && Array.isArray((stored as DatabaseSchema).users)) {
-        if (!stored.accounts) stored.accounts = [];
-        if (!stored.systemAuditLogs) stored.systemAuditLogs = [];
-        if (!stored.discoveryJobs) stored.discoveryJobs = [];
-        if (!stored.discoveryPool) stored.discoveryPool = [];
-        // Env-driven admin credential rotation: application boot applies the
-        // ADMIN_EMAIL / ADMIN_PASSWORD override to the stored admin user, so
-        // secret rotation never requires code changes or snapshot surgery.
-        if (process.env.ADMIN_EMAIL || process.env.ADMIN_PASSWORD) {
-          const admin = stored.users.find((u) => u.id === 'usr_admin');
-          if (admin) {
-            if (process.env.ADMIN_EMAIL) admin.email = process.env.ADMIN_EMAIL.trim().toLowerCase();
-            if (process.env.ADMIN_PASSWORD) {
-              admin.salt = crypto.randomBytes(16).toString('hex');
-              admin.passwordHash = crypto.pbkdf2Sync(process.env.ADMIN_PASSWORD, admin.salt, 1000, 64, 'sha512').toString('hex');
-            }
-            console.log('[seed] admin credential applied from environment');
+    const attempts = 3;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        const stored = (await this.store.load()) as DatabaseSchema | null;
+        if (stored && typeof stored === 'object' && Array.isArray((stored as DatabaseSchema).users)) {
+          const incomingJobs = Array.isArray(stored.jobs) ? stored.jobs.length : 0;
+          this.data = this.normalizeSnapshot(stored);
+          // Record the durable version we just observed so saveNow() can
+          // detect a concurrent writer before it clobbers anything.
+          this.storeVersion = await this.store.getVersion();
+          this.storeVerified = true;
+          console.log(`[db] Snapshot hydrated from ${this.store.name} store`);
+          if (this.data.jobs.length !== incomingJobs) {
+            // The one-time dedupe removed rows — persist the cleaned snapshot
+            // right away so the repair is durable even if no other write happens.
+            await this.saveNow();
           }
-        }
-        // Repair legacy/partial jobs once at hydration: real Gemini output
-        // may lack the skill arrays the UI assumes. One pass, then persisted.
-        stored.jobs = stored.jobs.map((j: any) => ({
-          ...j,
-          requiredSkills: Array.isArray(j.requiredSkills) ? j.requiredSkills : [],
-          matchingSkills: Array.isArray(j.matchingSkills) ? j.matchingSkills : [],
-          missingSkills: Array.isArray(j.missingSkills) ? j.missingSkills : [],
-          description: j.description ?? '',
-        }));
-        // One-time dedupe of historical feed rows: pool-serve used to re-add
-        // the same (userId, company, title) posting on every serve. Jobs are
-        // stored newest-first, so keeping the first occurrence keeps the
-        // newest copy. One pass at boot, then addJobs() keeps it that way.
-        const seenKeys = new Set<string>();
-        const beforeDedupe = stored.jobs.length;
-        stored.jobs = stored.jobs.filter((j: any) => {
-          const k = jobKey(j);
-          if (seenKeys.has(k)) return false;
-          seenKeys.add(k);
-          return true;
-        });
-        if (stored.jobs.length !== beforeDedupe) {
-          console.log(`[db] Deduped job feed: removed ${beforeDedupe - stored.jobs.length} duplicate rows`);
-        }
-        if (!Array.isArray(stored.jobs)) stored.jobs = [];
-        if (!Array.isArray(stored.profiles)) stored.profiles = [];
-        if (!Array.isArray(stored.resumes)) stored.resumes = [];
-        if (!Array.isArray(stored.applications)) stored.applications = [];
-        if (!Array.isArray(stored.agentLogs)) stored.agentLogs = [];
-        stored.users.forEach((u: any) => {
-          if (!u.role) u.role = 'candidate';
-        });
-        // Opt-in demo personas: scrub legacy seed users from any stored
-        // snapshot unless explicitly enabled, so known sample passwords
-        // ("password123") can never authenticate on a production instance.
-        if (process.env.DEMO_MODE !== 'personas') {
-          const demoIds = new Set(['usr_alex_chen', 'usr_priya_sharma']);
-          const before = stored.users.length;
-          stored.users = stored.users.filter((u: any) => !demoIds.has(String(u.id)));
-          if (stored.users.length !== before) {
-            console.log('[seed] demo persona accounts scrubbed (DEMO_MODE not enabled)');
-          }
-        }
-        if (!stored.users.some((u: any) => u.role === 'admin')) {
-          stored.users.push(this.buildAdminUser());
-        }
-        this.data = stored;
-        console.log(`[db] Snapshot hydrated from ${this.store.name} store`);
-        if (stored.jobs.length !== beforeDedupe) {
-          // Persist the cleaned snapshot right away so the one-time dedupe is
-          // durable even if no other write happens on this instance.
+        } else {
+          // load() returned null: definitively nothing stored yet (a read
+          // error throws instead), so the seed snapshot is authoritative.
+          this.storeVerified = true;
           await this.saveNow();
+          console.log(`[db] No stored snapshot — seeded database pushed to ${this.store.name} store`);
         }
-      } else {
-        await this.saveNow();
-        console.log(`[db] No stored snapshot — seeded database pushed to ${this.store.name} store`);
+        return;
+      } catch (e) {
+        console.error(`[db] Hydration from ${this.store.name} store failed (attempt ${attempt + 1}/${attempts}):`, e instanceof Error ? e.message : e);
+        if (attempt < attempts - 1) await new Promise((r) => setTimeout(r, 400 * Math.pow(3, attempt)));
       }
-    } catch (e) {
-      console.error(`[db] Hydration from ${this.store.name} store failed — serving seeded snapshot. Round-trips will still attempt to persist.`, e);
     }
+    // Fail closed: serve the seed snapshot but NEVER persist from this state.
+    this.storeVerified = false;
+    console.error(`[db] Hydration FAILED after ${attempts} attempts — serving seed snapshot with persistence DISABLED to protect the durable store.`);
+  }
+
+  /**
+   * Repair/normalise a loaded snapshot: default any missing collections,
+   * apply env-driven admin credential rotation, repair legacy job rows,
+   * dedupe the feed, scrub demo personas, guarantee an admin exists.
+   * Shared by hydrate() and the conflict-merge path.
+   */
+  private normalizeSnapshot(stored: DatabaseSchema): DatabaseSchema {
+    if (!stored.accounts) stored.accounts = [];
+    if (!stored.systemAuditLogs) stored.systemAuditLogs = [];
+    if (!stored.discoveryJobs) stored.discoveryJobs = [];
+    if (!stored.discoveryPool) stored.discoveryPool = [];
+    this.applyAdminCredentialOverride(stored);
+    // Repair legacy/partial jobs once at hydration: real Gemini output
+    // may lack the skill arrays the UI assumes. One pass, then persisted.
+    stored.jobs = (Array.isArray(stored.jobs) ? stored.jobs : []).map((j: any) => ({
+      ...j,
+      requiredSkills: Array.isArray(j.requiredSkills) ? j.requiredSkills : [],
+      matchingSkills: Array.isArray(j.matchingSkills) ? j.matchingSkills : [],
+      missingSkills: Array.isArray(j.missingSkills) ? j.missingSkills : [],
+      description: j.description ?? '',
+    }));
+    // One-time dedupe of historical feed rows: pool-serve used to re-add
+    // the same (userId, company, title) posting on every serve. Jobs are
+    // stored newest-first, so keeping the first occurrence keeps the
+    // newest copy. One pass at boot, then addJobs() keeps it that way.
+    const seenKeys = new Set<string>();
+    const beforeDedupe = stored.jobs.length;
+    stored.jobs = stored.jobs.filter((j: any) => {
+      const k = jobKey(j);
+      if (seenKeys.has(k)) return false;
+      seenKeys.add(k);
+      return true;
+    });
+    if (stored.jobs.length !== beforeDedupe) {
+      console.log(`[db] Deduped job feed: removed ${beforeDedupe - stored.jobs.length} duplicate rows`);
+    }
+    if (!Array.isArray(stored.profiles)) stored.profiles = [];
+    if (!Array.isArray(stored.resumes)) stored.resumes = [];
+    if (!Array.isArray(stored.applications)) stored.applications = [];
+    if (!Array.isArray(stored.agentLogs)) stored.agentLogs = [];
+    if (!Array.isArray(stored.systemAuditLogs)) stored.systemAuditLogs = [];
+    if (!Array.isArray(stored.accounts)) stored.accounts = [];
+    if (!Array.isArray(stored.discoveryJobs)) stored.discoveryJobs = [];
+    if (!Array.isArray(stored.discoveryPool)) stored.discoveryPool = [];
+    stored.users.forEach((u: any) => {
+      if (!u.role) u.role = 'candidate';
+    });
+    // Opt-in demo personas: scrub legacy seed users from any stored
+    // snapshot unless explicitly enabled, so known sample passwords
+    // ("password123") can never authenticate on a production instance.
+    if (process.env.DEMO_MODE !== 'personas') {
+      const demoIds = new Set(['usr_alex_chen', 'usr_priya_sharma']);
+      const before = stored.users.length;
+      stored.users = stored.users.filter((u: any) => !demoIds.has(String(u.id)));
+      if (stored.users.length !== before) {
+        console.log('[seed] demo persona accounts scrubbed (DEMO_MODE not enabled)');
+      }
+    }
+    if (!stored.users.some((u: any) => u.role === 'admin')) {
+      stored.users.push(this.buildAdminUser());
+    }
+    return stored;
+  }
+
+  /**
+   * Env-driven admin credential rotation: boot applies the ADMIN_EMAIL /
+   * ADMIN_PASSWORD override to the stored admin user, so secret rotation
+   * never requires code changes or snapshot surgery.
+   */
+  private applyAdminCredentialOverride(schema: DatabaseSchema): void {
+    if (!process.env.ADMIN_EMAIL && !process.env.ADMIN_PASSWORD) return;
+    const admin = schema.users.find((u) => u.id === 'usr_admin');
+    if (!admin) return;
+    if (process.env.ADMIN_EMAIL) admin.email = process.env.ADMIN_EMAIL.trim().toLowerCase();
+    if (process.env.ADMIN_PASSWORD) {
+      admin.salt = crypto.randomBytes(16).toString('hex');
+      admin.passwordHash = crypto.pbkdf2Sync(process.env.ADMIN_PASSWORD, admin.salt, 1000, 64, 'sha512').toString('hex');
+    }
+    console.log('[seed] admin credential applied from environment');
   }
 
   private async saveNow(): Promise<boolean> {
+    // DURABILITY GUARD: after a failed hydration this instance's memory is
+    // seed-era guesswork. Persisting it would replay the exact incident class
+    // that once wiped production state (stale memory + whole-snapshot upsert),
+    // so writes are refused outright — the local change stays in memory only.
+    if (!this.storeVerified) {
+      console.error('[db] Persist REFUSED — durable store was not verified at hydration. Write kept in memory only.');
+      return false;
+    }
     // Transient free-tier network blips ('fetch failed') must not silently
     // drop a registration. Bounded retries: 3 attempts, 0.4s/1.2s/2.4s.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await this.store.save(this.data);
+        // Optimistic concurrency: if another writer advanced the durable
+        // snapshot since we last observed it, merge it in before we upsert.
+        await this.assureFreshStore();
+        const writtenVersion = await this.store.save(this.data);
+        this.storeVersion = writtenVersion;
         if (attempt > 0) console.log(`[db] Snapshot persisted on retry ${attempt}`);
         return true;
       } catch (err) {
@@ -145,6 +221,62 @@ class DatabaseService {
     }
     console.error('[db] Snapshot persist FAILED after 3 attempts — in-memory data at risk of loss');
     return false;
+  }
+
+  /**
+   * Optimistic concurrency check: if the durable store's version marker moved
+   * since we last observed it, another writer (another serverless instance, a
+   * second dev server) got there first. Reload the durable snapshot and
+   * union-merge it into local memory BEFORE our upsert, so a stale instance
+   * can never erase newer data with a whole-snapshot write.
+   */
+  private async assureFreshStore(): Promise<void> {
+    const durableVersion = await this.store.getVersion();
+    if (!durableVersion || sameStoreVersion(durableVersion, this.storeVersion)) return;
+    console.warn(`[db] Store advanced under this instance (was ${this.storeVersion ?? 'unknown'}, now ${durableVersion}) — merging durable snapshot before persist`);
+    const durable = (await this.store.load()) as DatabaseSchema | null;
+    if (durable && typeof durable === 'object' && Array.isArray(durable.users)) {
+      this.mergeDurableIntoLocal(this.normalizeSnapshot(durable));
+    }
+    this.storeVersion = durableVersion;
+  }
+
+  /**
+   * Union-merge a freshly-loaded durable snapshot into local memory after a
+   * version conflict: durable wins for shared ids, local-only entries survive
+   * (they exist only in this instance's memory and would otherwise be lost),
+   * and discovery-pool entries merge per poolKey keeping the fresher scan.
+   */
+  private mergeDurableIntoLocal(durable: DatabaseSchema): void {
+    const local = this.data;
+    local.users = unionById(durable.users, local.users);
+    local.profiles = unionById(durable.profiles, local.profiles);
+    local.resumes = unionById(durable.resumes, local.resumes);
+    local.jobs = unionById(durable.jobs, local.jobs);
+    local.applications = unionById(durable.applications, local.applications);
+    local.accounts = unionById(durable.accounts, local.accounts);
+    local.agentLogs = unionById(durable.agentLogs, local.agentLogs);
+    local.discoveryJobs = unionById(durable.discoveryJobs, local.discoveryJobs);
+    // Append-only audit trail: durable first, then local-only entries.
+    const durableLogIds = new Set(durable.systemAuditLogs.map((l) => l.id));
+    local.systemAuditLogs = [
+      ...durable.systemAuditLogs,
+      ...local.systemAuditLogs.filter((l) => !durableLogIds.has(l.id)),
+    ];
+    // Pool: keyed by poolKey, fresher lastRequestedAt wins (never resurrect
+    // a stale scan over a newer durable one).
+    const poolByKey = new Map(durable.discoveryPool.map((e) => [e.poolKey, e]));
+    for (const entry of local.discoveryPool) {
+      const durableEntry = poolByKey.get(entry.poolKey);
+      if (!durableEntry) {
+        poolByKey.set(entry.poolKey, entry);
+        continue;
+      }
+      const localAt = Date.parse(entry.lastRequestedAt) || 0;
+      const durableAt = Date.parse(durableEntry.lastRequestedAt) || 0;
+      if (localAt > durableAt) poolByKey.set(entry.poolKey, entry);
+    }
+    local.discoveryPool = [...poolByKey.values()];
   }
 
   /** Immediate, awaited persistence for auth-critical writes (registration). */

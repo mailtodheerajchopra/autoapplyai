@@ -22,8 +22,14 @@ export interface StateStore {
   readonly name: string;
   /** Load the persisted snapshot, or null when nothing is stored yet. */
   load(): Promise<unknown | null>;
-  /** Persist the whole snapshot (atomic replace, last write wins). */
-  save(snapshot: unknown): Promise<void>;
+  /** Persist the whole snapshot (atomic replace). Returns the durable version written. */
+  save(snapshot: unknown): Promise<string>;
+  /**
+   * The durable store's current version marker (e.g. row updated_at), or null
+   * when nothing is stored. Powers optimistic-concurrency checks in db.ts so a
+   * stale instance can never clobber a newer snapshot with last-write-wins.
+   */
+  getVersion(): Promise<string | null>;
 }
 
 // Re-read at call time (not module init) so dotenv/config loads first.
@@ -58,24 +64,36 @@ class FileStore implements StateStore {
   }
 
   async load(): Promise<unknown | null> {
+    if (!fs.existsSync(this.filePath)) return null;
     try {
-      if (fs.existsSync(this.filePath)) {
-        return JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
-      }
+      return JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
     } catch (e) {
-      console.warn('[storage:file] Could not load snapshot:', e);
+      // A corrupted-but-present file must THROW, not return null — hydrate()
+      // treats null as "nothing stored" and would overwrite the file with
+      // seed data, destroying possibly-recoverable state.
+      console.warn('[storage:file] Snapshot file exists but could not be parsed:', e);
+      throw e;
     }
-    return null;
   }
 
-  async save(snapshot: unknown): Promise<void> {
+  async save(snapshot: unknown): Promise<string> {
+    const dir = path.dirname(this.filePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(this.filePath, JSON.stringify(snapshot, null, 2), 'utf-8');
+    // Version marker = the file's mtime, the same value getVersion() reports,
+    // so a second process observes our write and we observe theirs.
+    return fs.statSync(this.filePath).mtime.toISOString();
+  }
+
+  async getVersion(): Promise<string | null> {
     try {
-      const dir = path.dirname(this.filePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(this.filePath, JSON.stringify(snapshot, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('[storage:file] Failed to persist snapshot:', err);
+      if (fs.existsSync(this.filePath)) {
+        return fs.statSync(this.filePath).mtime.toISOString();
+      }
+    } catch {
+      // File disappeared mid-check → treat as nothing stored.
     }
+    return null;
   }
 }
 
@@ -101,16 +119,32 @@ class SupabaseStore implements StateStore {
     return data ? (data as { data: unknown }).data : null;
   }
 
-  async save(snapshot: unknown): Promise<void> {
+  async save(snapshot: unknown): Promise<string> {
+    // We supply updated_at ourselves so the returned version is exactly what
+    // the durable row now holds (Supabase would otherwise normalise it).
+    const writtenAt = new Date().toISOString();
     const { error } = await this.client
       .from('app_state')
       .upsert(
-        { id: APP_STATE_ROW_ID, data: snapshot, updated_at: new Date().toISOString() },
+        { id: APP_STATE_ROW_ID, data: snapshot, updated_at: writtenAt },
         { onConflict: 'id' }
       );
     if (error) {
       throw new Error(`[storage:supabase] Failed to persist snapshot: ${error.message}`);
     }
+    return writtenAt;
+  }
+
+  async getVersion(): Promise<string | null> {
+    const { data, error } = await this.client
+      .from('app_state')
+      .select('updated_at')
+      .eq('id', APP_STATE_ROW_ID)
+      .maybeSingle();
+    if (error) {
+      throw new Error(`[storage:supabase] Failed to read snapshot version: ${error.message}`);
+    }
+    return data ? ((data as { updated_at: string | null }).updated_at ?? null) : null;
   }
 }
 
