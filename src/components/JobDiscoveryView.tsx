@@ -36,7 +36,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
   resumes,
   onRefreshResumes,
 }) => {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [portalFilter, setPortalFilter] = useState<string>('all');
@@ -220,7 +220,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
           {/* Onboarding stepper: exactly how a new user explores the site */}
           <div className="flex items-center justify-center gap-2 sm:gap-3 mb-6 text-[11px] font-medium">
             {[1, 2, 3].map((n) => {
-              const state = n === 1 ? 'done'
+              const state = n === 1 ? (user ? 'done' : 'todo')
                 : n === 2 ? 'active'
                 : 'todo';
               return (

@@ -71,7 +71,7 @@ export const TopNav: React.FC<TopNavProps> = ({
 
           {/* Zone 2: Portal-Specific Navigation Links */}
           {activePortal === 'candidate' ? (
-            <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300">
+            <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300 min-w-0 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {candidateNavItems.map((item) => {
                 const isActive = activeTab === item.id;
                 return (
@@ -90,9 +90,9 @@ export const TopNav: React.FC<TopNavProps> = ({
               })}
             </nav>
           ) : (
-            <div className="hidden md:flex items-center gap-3 text-xs text-slate-400">
-              <span className="font-medium text-slate-300">Platform Supervision Mode:</span>
-              <span>Tenant Security · 45-Day Policy · Conflict Shield · Audit Logs</span>
+            <div className="hidden md:flex items-center gap-3 text-xs text-slate-400 min-w-0 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              <span className="font-medium text-slate-300 shrink-0">Platform Supervision Mode:</span>
+              <span className="whitespace-nowrap">Tenant Security · 45-Day Policy · Conflict Shield · Audit Logs</span>
             </div>
           )}
 
