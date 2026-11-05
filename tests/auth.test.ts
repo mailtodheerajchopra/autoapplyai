@@ -134,4 +134,20 @@ describe('OAuth provider plumbing', () => {
     expect(li.status).toBe(302);
     expect(li.headers.location).toContain('oauthError=not_configured');
   });
+
+  it('derives an https redirect_uri behind an https proxy (regression: precedence bug)', async () => {
+    process.env.GOOGLE_CLIENT_ID = 'test-id';
+    process.env.GOOGLE_CLIENT_SECRET = 'test-secret';
+    try {
+      const res = await request(app)
+        .get('/api/auth/google/start')
+        .set('x-forwarded-proto', 'https')
+        .set('host', 'www.applymatica.com');
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toContain('redirect_uri=https%3A%2F%2Fwww.applymatica.com');
+    } finally {
+      delete process.env.GOOGLE_CLIENT_ID;
+      delete process.env.GOOGLE_CLIENT_SECRET;
+    }
+  });
 });

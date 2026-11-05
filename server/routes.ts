@@ -226,7 +226,12 @@ async function completeOAuthLogin(
 
 function requestBase(req: Request): { host: string; proto: string } {
   const host = ((req.headers['x-forwarded-host'] as string) || (req.headers.host as string) || 'localhost:3000').split(',')[0].trim();
-  const proto = ((req.headers['x-forwarded-proto'] as string) || host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https').split(',')[0];
+  // Trust the proxy's forwarded proto when present (Vercel sets https);
+  // only fall back to the host heuristic for direct local connections.
+  // NB: do not fold this into the || chain — a truthy header must yield
+  // ITS value, not the localhost fallback.
+  const fwdProto = (req.headers['x-forwarded-proto'] as string | undefined)?.split(',')[0].trim();
+  const proto = fwdProto || (host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https');
   return { host, proto };
 }
 
