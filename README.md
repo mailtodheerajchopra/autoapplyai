@@ -1,8 +1,26 @@
 # ApplyMatica (AutoApply AI) — Autonomous Job Discovery & Workday Auto-Fill Agent
 
+[![CI](https://github.com/mailtodheerajchopra/autoapplyai/actions/workflows/ci.yml/badge.svg)](https://github.com/mailtodheerajchopra/autoapplyai/actions/workflows/ci.yml)
+![License](https://img.shields.io/badge/license-Apache--2.0-green)
+![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen)
+![Deploy](https://img.shields.io/badge/deploy-Vercel-black)
+
 > **Live: [https://www.applymatica.com](https://www.applymatica.com)** — production on Vercel (Hobby, $0/mo).
 
 ![Discovery onboarding — CV gate before the agent activates](docs/screenshots/discovery-onboarding.jpg)
+
+## Tech stack
+
+| Layer | Tech |
+|---|---|
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS v4, lucide-react, motion |
+| Backend | Node.js + Express (TypeScript) as a single serverless entry on Vercel |
+| Database | Supabase (PostgreSQL) via a custom single-snapshot `StateStore` (FileStore locally, SupabaseStore in prod) |
+| Auth | HMAC-signed bearer tokens, PBKDF2 password hashing, Google + LinkedIn OAuth |
+| AI | Google Gemini with a timeout-bounded degradation chain → Groq (Llama 3.3 70B) → rule-based mock tier |
+| Testing | Vitest + Supertest (62 tests), GitHub Actions CI |
+
+---
 
 
 ## The problem it solves
@@ -71,7 +89,7 @@ AutoApply AI is a production-grade agent platform that:
  └── Cron        (daily discovery sweep; recency-window prompt)
         │                │
         ▼                ▼
- Gemini 3.8-flash → 3.5-flash → Groq/Llama-3.3 → mock     Supabase JSONB snapshot
+ Gemini 3.8-flash → 3.1-flash-lite → Groq/Llama-3.3 → mock
  (timeout-bounded degradation chain)                    (atomic read-modify-write,
                                                           3-attempt retry, RLS on)
 ```
@@ -79,7 +97,7 @@ AutoApply AI is a production-grade agent platform that:
 - **Async design:** `POST /agent/discover` returns `202 + jobId in <300ms`; the model call runs in the background and the client polls — with *stale-job rescue* so a serverless eviction can never strand a run.
 - **Model degradation chain:** primary 12s → secondary 30s → Groq 30s → mock fallback. 429/503 degrade silently; the product keeps working at zero quota.
 
-| Tests | Vitest + Supertest — **53 tests** (auth lockdown, filter chain, moderation, async pipeline, pool merge, storage round-trip) |
+| Tests | Vitest + Supertest — **62 tests** (auth lockdown, filter chain, moderation, async pipeline, pool merge, storage round-trip) |
 | Load | k6 — kickoff p95 ≈ 300 ms under concurrency, 0 errors |
 | Cost | $0 — Hobby plan, free Gemini tier amortized by the shared pool, free Supabase tier |
 
@@ -129,7 +147,7 @@ cd autoapplyai
 npm install
 cp .env.example .env        # fill in GEMINI_API_KEY, AUTH_SECRET, Supabase keys
 npm run dev                 # full-stack dev server at http://localhost:3000
-npm run test                # 53 tests
+npm run test                # 62 tests
 ```
 
 With no env config the app still boots in degraded mode (mock agent paths) — good for UI work.
@@ -146,6 +164,7 @@ With no env config the app still boots in degraded mode (mock agent paths) — g
 ## Community
 
 - **Contributing** — [CONTRIBUTING.md](CONTRIBUTING.md): dev setup, coding style, and the pull-request process.
+- **Good first issues** — [labeled `good first issue`](https://github.com/mailtodheerajchopra/autoapplyai/labels/good%20first%20issue): small, well-scoped tasks perfect for a first PR. Comment "I'm taking this" on one and it's yours — PRs are reviewed within ~48 hours.
 - **Code of Conduct** — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): the community standard for interactions.
 - **Security** — [SECURITY.md](SECURITY.md): responsible disclosure (please don't open public issues for vulnerabilities).
 
