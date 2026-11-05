@@ -10,6 +10,7 @@ import { RelevanceAuditHub } from './components/RelevanceAuditHub';
 import { AdminConsoleView } from './components/AdminConsoleView';
 import { WorkdayReviewModal } from './components/WorkdayReviewModal';
 import { AuthModal } from './components/AuthModal';
+import { PrivacyPolicy, TermsOfService } from './components/LegalPages';
 import { JobPosting, WorkdayApplication, ResumeDocument, AgentRunLog } from './types';
 import { api } from './api';
 
@@ -153,7 +154,9 @@ function MainDashboard() {
               Free Hosting Guide (Vercel & Render)
             </button>
             <span>·</span>
-            <span>Zero-Cost Serverless Ready</span>
+            <a href="/privacy" className="hover:text-slate-100 transition-colors">Privacy Policy</a>
+            <span>·</span>
+            <a href="/terms" className="hover:text-slate-100 transition-colors">Terms of Service</a>
           </div>
         </div>
       </footer>
@@ -177,6 +180,11 @@ function MainDashboard() {
 }
 
 export default function App() {
+  // Public legal pages (required for the Google OAuth consent-screen publish)
+  // render standalone — no auth, no dashboard chrome.
+  const path = window.location.pathname;
+  if (path === '/privacy') return <PrivacyPolicy />;
+  if (path === '/terms') return <TermsOfService />;
   return (
     <AuthProvider>
       <MainDashboard />

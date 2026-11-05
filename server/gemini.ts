@@ -935,16 +935,59 @@ function getFallbackDiscoveredJobs(profile: CandidateProfile, recencyCap = 45, l
       fitRationale: "Direct match on all foundational backend and API technologies.",
       status: "discovered" as const,
     },
+    {
+      title: "Senior Software Engineer — Marketplace Platform",
+      company: "noon",
+      location: "Dubai, UAE / Hybrid",
+      remoteType: "Hybrid" as const,
+      employmentType: "Full-time" as const,
+      salaryRange: "AED 25,000 - 38,000 / month",
+      source: "LinkedIn" as const,
+      sourceUrl: "https://www.linkedin.com/jobs/view/senior-software-engineer-noon-dubai",
+      portalType: "direct" as const,
+      description: "Own full-stack features across the marketplace and last-mile logistics platforms serving GCC markets; React frontends on Node.js services, deployed on AWS me-central-1.",
+      requiredSkills: ["React", "Node.js", "TypeScript", "PostgreSQL", "AWS"],
+      matchScore: 90,
+      matchingSkills: ["React", "Node.js", "TypeScript", "PostgreSQL"],
+      missingSkills: ["AWS"],
+      postedDaysAgo: 9,
+      fitRationale: "Gulf-market full-stack role matching core React/Node skills with regional cloud exposure.",
+      status: "discovered" as const,
+    },
+    {
+      title: "Cloud Engineer — Digital Banking",
+      company: "Emirates NBD",
+      location: "Dubai, UAE",
+      remoteType: "On-site" as const,
+      employmentType: "Full-time" as const,
+      salaryRange: "AED 28,000 - 40,000 / month",
+      source: "LinkedIn" as const,
+      sourceUrl: "https://www.linkedin.com/jobs/view/cloud-engineer-emirates-nbd-dubai",
+      portalType: "workday" as const,
+      workdayTenantId: "emiratesnbd",
+      description: "Build and operate cloud-native banking services (Kubernetes, Terraform, CI/CD) for UAE retail and corporate digital channels in a regulated environment.",
+      requiredSkills: ["AWS", "Kubernetes", "Docker", "Terraform", "Node.js"],
+      matchScore: 87,
+      matchingSkills: ["Docker", "Node.js"],
+      missingSkills: ["Kubernetes", "Terraform"],
+      postedDaysAgo: 14,
+      fitRationale: "UAE banking cloud role matching DevOps foundations; Workday-managed enterprise.",
+      status: "discovered" as const,
+    },
   ];
 
   // The mock tier obeys the same geo rules as the AI tiers: an India-market
   // candidate gets the India slice only — US canned entries would (correctly)
   // be dropped by the serve-time filter anyway, so don't offer them. The
   // kickoff's location counts too: an explicit "India" search must stay
-  // India-shaped even when the parsed profile has no location yet.
-  const isIndiaMarket = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(profile.location || '')
-    || /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(locationHint || '');
-  const marketJobs = isIndiaMarket
+  // India-shaped even when the parsed profile has no location yet. Same for
+  // the Gulf corridor ("Dubai" searches must not surface Bangalore roles).
+  const marketSignal = (profile.location || '') + ' ' + (locationHint || '');
+  const isIndiaMarket = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(marketSignal);
+  const isGulfMarket = /(?:\bu\.a\.e\b|\buae\b|united arab emirates|\bdubai\b|\babu dhabi\b|\bsharjah\b|\briyadh\b|\bsaudi\b|\bksa\b|\bdoha\b|\bqatar\b|\bkuwait\b|\bbahrain\b|\boman\b|\bmuscat\b|\bgulf\b)/i.test(marketSignal);
+  const marketJobs = isGulfMarket
+    ? rawJobs.filter((j) => /(?:dubai|uae|abu dhabi|riyadh|doha|saudi|middle east|gcc)/i.test(j.location) || j.remoteType === 'Remote')
+    : isIndiaMarket
     ? rawJobs.filter((j) => /india|bengaluru|bangalore|pune/i.test(j.location))
     : rawJobs;
 

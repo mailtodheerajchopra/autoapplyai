@@ -50,6 +50,10 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
   // anywhere in the UI. Sending an empty list is safe — the server falls back
   // to the profile's own targetRoles internally.
   const [agentKeywords, setAgentKeywords] = useState<string>('');
+  // Explicit search market for the next agent run — blank means "use my
+  // profile location". This is what makes cross-market searches ("Dubai")
+  // possible at all; before, the kickoff hardcoded the profile location.
+  const [searchLocation, setSearchLocation] = useState<string>('');
   const [selectedSources, setSelectedSources] = useState<string[]>([
     'LinkedIn',
     'Naukri',
@@ -121,7 +125,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
       const kickoff = await api.kickoffAgentDiscovery({
         keywords,
         sources: selectedSources,
-        location: profile?.location || 'Remote',
+        location: searchLocation.trim() || profile?.location || 'Remote',
         remoteOnly,
         minMatchScore: minMatch,
       });
@@ -188,6 +192,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
     if ((remoteType || '').toLowerCase() === 'remote') return 'remote';
     if (/\b(usa|united states|us)\b|,\s*(ca|ny|tx|wa|ma|il|ga|fl|va|nc|or|co|az|dc|pa|nj|mi|oh)\b/i.test(l)) return 'us';
     if (/india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|gurugram|kolkata/i.test(l)) return 'india';
+    if (/\b(uae|u\.a\.e|dubai|abu dhabi|united arab emirates|sharjah|riyadh|saudi|ksa|doha|qatar|kuwait|bahrain|oman|muscat)\b/.test(l)) return 'ae';
     return 'other';
   };
   const profileCountry = countryOfJob(profile?.location || '');
@@ -318,6 +323,17 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
               />
             </div>
 
+            <div className="relative sm:w-56">
+              <MapPin className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+              <input
+                type="text"
+                value={searchLocation}
+                onChange={(e) => setSearchLocation(e.target.value)}
+                placeholder={`Market (default: ${profile?.location || 'Remote'})`}
+                className="w-full h-10 pl-9 pr-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
             <button
               onClick={handleRunAgent}
               disabled={isAgentRunning}
@@ -426,6 +442,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
               <option value="remote">Remote only</option>
               <option value="india">India</option>
               <option value="us">US</option>
+              <option value="ae">UAE / Gulf</option>
               <option value="other">Other</option>
             </select>
           </div>

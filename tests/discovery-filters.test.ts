@@ -198,6 +198,25 @@ describe('Enforce 3 — STRICT preferred-location filter', () => {
     expect(kept).toHaveLength(0);
   });
 
+  it('resolves Dubai/UAE postings to a country ("Dubai, UAE" → AE)', () => {
+    // Regression: the Gulf corridor was absent from COUNTRY_HINTS, so a
+    // Dubai-market run resolved to null and the guard mis-classified it.
+    const { kept, dropped } = filterLocationJobs(
+      [mkJob('Dubai, UAE'), mkJob('Abu Dhabi, UAE'), mkJob('Bengaluru, India')],
+      'Dubai, UAE',
+    );
+    expect(kept.map((j) => j.location)).toEqual(['Dubai, UAE', 'Abu Dhabi, UAE']);
+    expect(dropped).toBe(1);
+  });
+
+  it('drops Gulf on-site postings for an India-profile candidate', () => {
+    const { kept } = filterLocationJobs(
+      [mkJob('Dubai, UAE'), mkJob('Remote', 'Remote')],
+      'Noida, India',
+    );
+    expect(kept.map((j) => j.location)).toEqual(['Remote']);
+  });
+
   it('keeps country-agnostic Remote postings for any profile', () => {
     const { kept } = filterLocationJobs(
       [mkJob('Remote', 'Remote'), mkJob('Remote - Global', 'Remote')],

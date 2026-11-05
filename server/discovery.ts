@@ -94,6 +94,19 @@ const COUNTRY_HINTS: Array<[RegExp, string]> = [
   [/\bjapan\b/i, 'JP'], [/\bchina\b/i, 'CN'], [/\bbrazil\b/i, 'BR'],
   [/\bmexico\b/i, 'MX'], [/\bpoland\b/i, 'PL'], [/\bswitzerland\b/i, 'CH'],
   [/\bphilippines\b/i, 'PH'], [/\bvietnam\b/i, 'VN'], [/\bnigeria\b/i, 'NG'],
+  // Gulf / Middle East (Dubai & the UAE corridor are top candidate markets —
+  // a "Dubai, UAE" posting must resolve to a country for the location guard).
+  [/(?:\bu\.a\.e\b|\buae\b|united arab emirates|\bdubai\b|\babu dhabi\b|\bsharjah\b)/i, 'AE'],
+  [/(?:\bsaudi arabia\b|\bksa\b|\briyadh\b|\bjeddah\b)/i, 'SA'],
+  [/(?:\bqatar\b|\bdoha\b)/i, 'QA'], [/\bkuwait\b/i, 'KW'],
+  [/(?:\bbahrain\b|\bmanama\b)/i, 'BH'], [/(?:\boman\b|\bmuscat\b)/i, 'OM'],
+  [/(?:\bisrael\b|\btel aviv\b)/i, 'IL'], [/(?:\bturkey\b|\bistanbul\b)/i, 'TR'],
+  [/(?:\begypt\b|\bcairo\b)/i, 'EG'], [/(?:\bpakistan\b|\bkarachi\b|\blahore\b)/i, 'PK'],
+  [/(?:\bindonesia\b|\bjakarta\b)/i, 'ID'], [/(?:\bmalaysia\b|\bkuala lumpur\b)/i, 'MY'],
+  [/(?:\bthailand\b|\bbangkok\b)/i, 'TH'], [/(?:\bnew zealand\b|\bauckland\b)/i, 'NZ'],
+  [/(?:\bspain\b|\bmadrid\b|\bbarcelona\b)/i, 'ES'], [/(?:\bitaly\b|\bmilan\b|\brome\b)/i, 'IT'],
+  [/(?:\bportugal\b|\blisbon\b)/i, 'PT'], [/(?:\bsweden\b|\bstockholm\b)/i, 'SE'],
+  [/(?:\bnorway\b|\boslo\b)/i, 'NO'], [/(?:\bdenmark\b|\bcopenhagen\b)/i, 'DK'],
 ];
 
 export function countryOf(location: string): string | null {
@@ -232,11 +245,13 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
   await markStage(userId, jobId, 'running', 75, `Conflict shield: ${droppedConflictCount} blocked`);
 
   // Enforce 3: preferred-location guard (own country / targets / Remote).
-  // The kickoff's own location counts as a market signal when the parsed
-  // profile has none — an explicit "India" run must guard like an India
-  // profile even before the candidate saves their profile location.
+  // An explicit kickoff market WINS over the profile location — typing
+  // "Dubai" into the search is an intent to see Dubai openings, not more
+  // of the profile's home market. When the kickoff has no location, the
+  // parsed profile location governs ("an explicit 'India' run must guard
+  // like an India profile" — same rule, symmetric).
   const { kept: locatedJobs, dropped: droppedLocationCount } = filterLocationJobs(
-    eligibleJobs, profile.location || options.location || '', profile.targetLocations || [],
+    eligibleJobs, options.location || profile.location || '', profile.targetLocations || [],
   );
   if (droppedLocationCount > 0) {
     await markStage(userId, jobId, 'running', 80, `Location policy: ${droppedLocationCount} beyond preferred region`);
