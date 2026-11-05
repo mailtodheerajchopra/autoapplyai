@@ -26,6 +26,7 @@ import {
   Sliders,
   Play,
   Terminal,
+  Trash2,
 } from 'lucide-react';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -41,6 +42,7 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
   const { user } = useAuth();
   const [activeAdminSubTab, setActiveAdminSubTab] = useState<'tenants' | 'audit' | 'safeguards' | 'relevance' | 'deployment' | 'keys'>('tenants');
   const [tenants, setTenants] = useState<AdminTenantSummary[]>([]);
+  const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
   const [stats, setStats] = useState<AdminPlatformStats | null>(null);
   const [auditLogs, setAuditLogs] = useState<SystemAuditLog[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -144,6 +146,25 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
       alert('Failed to regenerate key: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setRegeneratingKey(null);
+    }
+  };
+
+  const handleDeleteTenant = async (t: AdminTenantSummary) => {
+    const confirmed = window.confirm(
+      `Permanently delete tenant "${t.name}" (${t.email})?\n\nThis removes the account and ALL of its data: profile, ${t.resumeCount} resume(s), ${t.discoveredJobsCount} discovered job(s), ${t.applicationCount} application(s), and logs. This cannot be undone.`
+    );
+    if (!confirmed) return;
+    setDeletingTenantId(t.id);
+    try {
+      await api.deleteAdminUser(t.id);
+      setTenants((prev) => prev.filter((x) => x.id !== t.id));
+      setActionSuccess(`Deleted tenant ${t.email} and all associated data.`);
+      setTimeout(() => setActionSuccess(null), 5000);
+      await loadAdminData();
+    } catch (err) {
+      alert('Failed to delete tenant: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setDeletingTenantId(null);
     }
   };
 
@@ -473,19 +494,32 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
                         </td>
 
                         <td className="px-4 py-3.5 text-right">
-                          <button
-                            onClick={() => {
-                              if (onSwitchToTenant) {
-                                onSwitchToTenant(t.id);
-                                setActionSuccess(`Switched active workspace to ${t.name}. Inspecting tenant session.`);
-                                setTimeout(() => setActionSuccess(null), 3500);
-                              }
-                            }}
-                            className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors text-[11px] font-medium inline-flex items-center gap-1"
-                          >
-                            <span>Inspect Session</span>
-                            <ChevronRight className="w-3 h-3" />
-                          </button>
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              onClick={() => {
+                                if (onSwitchToTenant) {
+                                  onSwitchToTenant(t.id);
+                                  setActionSuccess(`Switched active workspace to ${t.name}. Inspecting tenant session.`);
+                                  setTimeout(() => setActionSuccess(null), 3500);
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors text-[11px] font-medium inline-flex items-center gap-1"
+                            >
+                              <span>Inspect Session</span>
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                            {!isSelf && t.role !== 'admin' && (
+                              <button
+                                onClick={() => handleDeleteTenant(t)}
+                                disabled={deletingTenantId === t.id}
+                                title="Delete this tenant and all of their data"
+                                className="px-2.5 py-1 rounded bg-rose-950/60 hover:bg-rose-900 text-rose-300 hover:text-white border border-rose-900/60 transition-colors text-[11px] font-medium inline-flex items-center gap-1 disabled:opacity-50"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>{deletingTenantId === t.id ? 'Deleting…' : 'Delete'}</span>
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );

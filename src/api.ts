@@ -167,6 +167,10 @@ export const api = {
     return fetchWithAuth('/api/admin/stats');
   },
 
+  async deleteAdminUser(userId: string): Promise<{ deleted: boolean }> {
+    return fetchWithAuth(`/api/admin/users/${userId}/delete`, { method: 'POST' });
+  },
+
   // Profile
   async getProfile(): Promise<CandidateProfile> {
     return fetchWithAuth('/api/profile');
