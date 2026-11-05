@@ -9,13 +9,10 @@ interface AuthModalProps {
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
-  const { login, loginWithGoogle, register, switchUser, demoPersonas } = useAuth();
+  const { login, register, switchUser, demoPersonas } = useAuth();
   const [isRegister, setIsRegister] = useState(false);
   const [googleEnabled, setGoogleEnabled] = useState(false);
   const [linkedinEnabled, setLinkedinEnabled] = useState(false);
-  const [isGoogleDirectMode, setIsGoogleDirectMode] = useState(false);
-  const [googleEmail, setGoogleEmail] = useState('');
-  const [googleName, setGoogleName] = useState('');
   // One-shot OAuth failure surfaced from the callback redirect (?oauthError=...).
   const [oauthError] = useState<string | null>(() => consumeStoredOAuthError());
 
@@ -57,24 +54,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleGoogleDirectSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!googleEmail || !googleEmail.includes('@')) {
-      setError('Please enter a valid Google email address');
-      return;
-    }
-    setError(null);
-    setSubmitting(true);
-    try {
-      await loginWithGoogle(googleEmail.trim(), googleName.trim() || undefined);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative space-y-5">
@@ -91,16 +70,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
             <span>Multi-User Isolated Sessions</span>
           </div>
           <h2 className="text-xl font-bold text-white">
-            {isGoogleDirectMode
-              ? 'Continue with Google'
-              : isRegister
-              ? 'Create Candidate Account'
-              : 'Sign In to AutoApply AI'}
+            {isRegister ? 'Create Candidate Account' : 'Sign In to AutoApply AI'}
           </h2>
           <p className="text-xs text-slate-400">
-            {isGoogleDirectMode
-              ? 'Your candidate profile, resumes, and Workday credentials will be bound to your Google account.'
-              : 'Your candidate profile, resumes, and Workday credentials are encrypted and isolated per user.'}
+            Your candidate profile, resumes, and Workday credentials are encrypted and isolated per user.
           </p>
         </div>
 
@@ -110,63 +83,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           </div>
         )}
 
-        {isGoogleDirectMode ? (
-          <form onSubmit={handleGoogleDirectSubmit} className="space-y-3 text-xs">
-            <div className="space-y-1">
-              <label className="text-slate-300 font-medium">Your Google Account Email</label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="email"
-                  required
-                  autoFocus
-                  value={googleEmail}
-                  onChange={(e) => setGoogleEmail(e.target.value)}
-                  placeholder="e.g. yourname@gmail.com"
-                  className="w-full h-9 pl-9 pr-3 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-slate-300 font-medium">Display Name (Optional)</label>
-              <div className="relative">
-                <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                <input
-                  type="text"
-                  value={googleName}
-                  onChange={(e) => setGoogleName(e.target.value)}
-                  placeholder="e.g. Dheeraj Chopra"
-                  className="w-full h-9 pl-9 pr-3 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full h-10 mt-2 rounded-lg bg-white hover:bg-slate-100 disabled:opacity-50 text-slate-900 font-semibold flex items-center justify-center gap-2 transition-colors shadow"
-            >
-              {submitting ? (
-                <div className="w-4 h-4 border-2 border-slate-900/30 border-t-slate-900 rounded-full animate-spin" />
-              ) : (
-                <>
-                  <svg className="w-4 h-4" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-                  <span>Authorize & Sign In with Google</span>
-                </>
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setIsGoogleDirectMode(false); setError(null); }}
-              className="w-full text-center text-xs text-slate-400 hover:text-slate-300 py-1"
-            >
-              ← Back to standard login
-            </button>
-          </form>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-3 text-xs">
+        <form onSubmit={handleSubmit} className="space-y-3 text-xs">
             {isRegister && (
               <div className="space-y-1">
                 <label className="text-slate-300 font-medium">Full Name</label>
@@ -234,23 +151,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               <div className="relative flex justify-center"><span className="px-3 bg-slate-950 text-[10px] uppercase tracking-wider text-slate-500">or</span></div>
             </div>
 
-            {googleEnabled ? (
+            {googleEnabled && (
               <a
                 href="/api/auth/google/start"
                 className="w-full h-10 rounded-lg bg-white hover:bg-slate-100 text-slate-900 text-xs font-semibold flex items-center justify-center gap-2 transition-colors shadow"
               >
                 <svg className="w-4 h-4" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-                <span>Continue with Google</span>
+                <span>{isRegister ? 'Sign up with Google' : 'Sign in with Google'}</span>
               </a>
-            ) : (
-              <button
-                type="button"
-                onClick={() => { setIsGoogleDirectMode(true); setError(null); }}
-                className="w-full h-10 rounded-lg bg-white hover:bg-slate-100 text-slate-900 text-xs font-semibold flex items-center justify-center gap-2 transition-colors shadow"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
-                <span>Continue with Google</span>
-              </button>
             )}
 
             {linkedinEnabled && (
@@ -263,7 +171,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               </a>
             )}
           </form>
-        )}
 
         <div className="text-center">
           <button

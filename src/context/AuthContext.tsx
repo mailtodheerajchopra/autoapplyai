@@ -11,7 +11,6 @@ interface AuthContextType {
   availableUsers: { id: string; email: string; name: string; role: 'candidate' | 'admin' }[];
   demoPersonas: { id: string; email: string; name: string; role: 'candidate' | 'admin' }[];
   login: (email: string, password: string) => Promise<void>;
-  loginWithGoogle: (email: string, name?: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
   switchUser: (userId: string) => Promise<void>;
@@ -90,19 +89,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const loginWithGoogle = async (email: string, name?: string) => {
-    setIsLoading(true);
-    try {
-      localStorage.removeItem('autoapply_explicit_logout');
-      const res = await api.loginGoogleDirect(email, name);
-      setUser(res.user);
-      setProfile(res.profile);
-      setActivePortal('candidate');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const register = async (name: string, email: string, password: string) => {
     setIsLoading(true);
     try {
@@ -172,7 +158,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         availableUsers: demoPersonas,
         demoPersonas,
         login,
-        loginWithGoogle,
         register,
         logout,
         switchUser,

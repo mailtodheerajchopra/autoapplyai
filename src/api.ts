@@ -110,15 +110,6 @@ export const api = {
     }
   },
 
-  async loginGoogleDirect(email: string, name?: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {
-    const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/google/direct', {
-      method: 'POST',
-      body: JSON.stringify({ email, name }),
-    });
-    setStoredToken(res.token);
-    return res;
-  },
-
   async register(name: string, email: string, password: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {
     const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/register', {
       method: 'POST',

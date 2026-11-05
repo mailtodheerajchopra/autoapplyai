@@ -272,48 +272,6 @@ apiRouter.get('/auth/google/config', (_req: Request, res: Response) => {
 
 // Direct Google sign-in: enables instant Google candidate sign-in / sign-up
 // in any environment, creating or resuming the isolated candidate account.
-apiRouter.post('/auth/google/direct', async (req: Request, res: Response) => {
-  const { email, name } = req.body as { email?: string; name?: string };
-  if (!email || !email.includes('@')) {
-    res.status(400).json({ error: 'Valid Google email is required' });
-    return;
-  }
-  const cleanEmail = email.trim().toLowerCase();
-  let user = db.findUserByEmail(cleanEmail);
-  const displayName = name?.trim() || cleanEmail.split('@')[0];
-
-  if (!user) {
-    user = db.createUser(cleanEmail, displayName, crypto.randomBytes(24).toString('base64url'), 'candidate');
-    db.addAuditLog({
-      userId: user.id,
-      timestamp: new Date().toISOString(),
-      category: 'security',
-      action: 'USER_REGISTERED_GOOGLE',
-      details: `Google account linked and candidate profile provisioned for ${cleanEmail}. Isolated session created.`,
-      severity: 'success',
-    });
-  } else {
-    db.addAuditLog({
-      userId: user.id,
-      timestamp: new Date().toISOString(),
-      category: 'security',
-      action: 'OAUTH_LOGIN',
-      details: `Google sign-in completed for ${cleanEmail}.`,
-      severity: 'info',
-    });
-  }
-
-  const token = generateToken(user.id);
-  const profile = db.getProfile(user.id);
-  await db.flush();
-
-  res.json({
-    user: { id: user.id, email: user.email, name: user.name, role: user.role },
-    token,
-    profile,
-  });
-});
-
 // Combined provider-capability probe for the sign-in modal.
 apiRouter.get('/auth/oauth/config', (_req: Request, res: Response) => {
   res.json({ google: googleOauthEnabled(), linkedin: linkedinOauthEnabled() });
