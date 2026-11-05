@@ -24,6 +24,7 @@ export interface DatabaseSchema {
   agentLogs: AgentRunLog[];
   discoveryJobs: DiscoveryJob[];
   discoveryPool: DiscoveryPoolEntry[];
+  systemSecrets?: Record<string, string>;
 }
 
 /** Dedupe identity for a discovered job posting within a user's feed. */
@@ -157,6 +158,7 @@ class DatabaseService {
     if (!Array.isArray(stored.accounts)) stored.accounts = [];
     if (!Array.isArray(stored.discoveryJobs)) stored.discoveryJobs = [];
     if (!Array.isArray(stored.discoveryPool)) stored.discoveryPool = [];
+    if (!stored.systemSecrets || typeof stored.systemSecrets !== 'object') stored.systemSecrets = {};
     stored.users.forEach((u: any) => {
       if (!u.role) u.role = 'candidate';
     });
@@ -716,6 +718,7 @@ class DatabaseService {
           ],
         },
       ] : [],
+      systemSecrets: {},
     };
 
     // The seeded snapshot is returned as the in-memory starting point;
@@ -789,6 +792,7 @@ class DatabaseService {
     this.data.profiles.push(newProfile);
 
     this.persist();
+    void this.saveNow();
     return newUser;
   }
 
@@ -940,6 +944,7 @@ class DatabaseService {
     }
     Object.assign(profile, updates, { updatedAt: new Date().toISOString() });
     this.persist();
+    void this.saveNow();
     return profile;
   }
 
@@ -1152,6 +1157,29 @@ class DatabaseService {
       .filter((e) => e.lastRequestedAt >= cutoff)
       .sort((a, b) => b.lastRequestedAt.localeCompare(a.lastRequestedAt))
       .slice(0, limit);
+  }
+
+  // System Secrets & Key Management
+  getSystemSecret(key: string): string | undefined {
+    return this.data.systemSecrets ? this.data.systemSecrets[key] : undefined;
+  }
+
+  async setSystemSecret(key: string, value: string): Promise<boolean> {
+    if (!this.data.systemSecrets) this.data.systemSecrets = {};
+    this.data.systemSecrets[key] = value;
+    this.persist();
+    return this.saveNow();
+  }
+
+  getAllSystemSecrets(): Record<string, string> {
+    return this.data.systemSecrets ? { ...this.data.systemSecrets } : {};
+  }
+
+  async setAllSystemSecrets(secrets: Record<string, string>): Promise<boolean> {
+    if (!this.data.systemSecrets) this.data.systemSecrets = {};
+    this.data.systemSecrets = { ...this.data.systemSecrets, ...secrets };
+    this.persist();
+    return this.saveNow();
   }
 }
 

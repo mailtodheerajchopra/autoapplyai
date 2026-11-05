@@ -56,12 +56,12 @@ export function deepSanitize<T>(obj: T): T {
 }
 
 /**
- * Degradation chain for Gemini models. The primary (3.8) can be
- * quota-exhausted or busy on the free tier; the secondary (3.5) is a
- * cheaper, widely-available tier that produces the same structured JSON.
- * Both have mock fallbacks downstream if both fail.
+ * Degradation chain for Gemini models.
+ * Primary: gemini-3.8-flash (standard text & multi-modal)
+ * Secondary: gemini-3.1-flash-lite (ultra-fast, highly reliable fallback)
+ * Downstream fallback: Groq (if configured) or fast rule-based parser.
  */
-const SECONDARY_MODEL = "gemini-3.5-flash";
+const SECONDARY_MODEL = "gemini-3.1-flash-lite";
 
 /** Models known-bad for this key during this process lifetime — skipped fast. */
 const unavailableModels = new Set<string>();
@@ -71,7 +71,7 @@ function isDegradableModelError(err: unknown): boolean {
   const status = (err as { status?: number })?.status;
   if (status === 429 || status === 503 || status === 404) return true;
   const msg = String((err as { message?: string })?.message ?? err);
-  return /quota|exhausted|unavailable|high demand|overloaded|rate limit/i.test(msg);
+  return /quota|exhausted|unavailable|high demand|overloaded|rate limit|not found/i.test(msg);
 }
 
 /**
@@ -90,11 +90,9 @@ async function generateWithModelChain(params: {
   let lastErr: unknown = new Error("No Gemini model available in chain");
   for (let i = 0; i < chain.length; i++) {
     const model = chain[i];
-    // Per-attempt budget: the primary free-tier flagship is often busy/quota'd
-    // and can hang ~100s behind the SDK's internal retries — abandon it fast
-    // and hand the wait to the next tier instead. The secondary gets the
-    // patient leash because that is where work actually happens today.
-    const attemptBudgetMs = model === MODEL_NAME ? 12_000 : 30_000;
+    // Per-attempt budget: primary gets 25s for deep JSON schema reasoning,
+    // secondary flash-lite is extremely rapid and gets 20s.
+    const attemptBudgetMs = model === MODEL_NAME ? 25_000 : 20_000;
     const attempt = ai.models.generateContent({ ...params, model });
     const attemptTimer = new Promise<never>((_, reject) =>
       setTimeout(
@@ -200,7 +198,11 @@ Provide a crisp professional headline and executive summary. The final profile f
 
   const parsePromise = (async () => {
     let contents: any;
-    if (isBase64Pdf) {
+    // Prefer clean extracted text when available: text generation is 5-10x faster
+    // than raw binary transfer and avoids huge base64 payload processing overhead.
+    if (plainText && plainText.trim().length > 50) {
+      contents = `Extract all candidate profile details, categorized skills, work history, and education from this resume text:\n\n${plainText}`;
+    } else if (isBase64Pdf) {
       contents = [
         {
           inlineData: {
@@ -208,10 +210,12 @@ Provide a crisp professional headline and executive summary. The final profile f
             data: content,
           },
         },
-        `Extract all candidate profile details, categorized skills, work history, and education from this resume in JSON format.${UNTRUSTED_DATA_RULE}`
+        {
+          text: `Extract all candidate profile details, categorized skills, work history, and education from this resume in JSON format.${UNTRUSTED_DATA_RULE}`,
+        },
       ];
     } else {
-      contents = `Extract all candidate profile details, categorized skills, work history, and education from this resume text:\n\n${plainText}`;
+      contents = `Extract all candidate profile details, categorized skills, work history, and education from this resume text:\n\n${plainText || 'Sample Resume'}`;
     }
 
     const response = await generateWithModelChain({
@@ -304,10 +308,9 @@ Provide a crisp professional headline and executive summary. The final profile f
     };
   })();
 
-  // The async pipeline tolerates slow free-tier generations; the resume
-  // upload request blocks, but structured parsing justifies the wait.
+  // 40s overall budget gives both primary (25s) and secondary (15s) time to resolve
   const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("Gemini resume parsing timeout (25s limit)")), 25000)
+    setTimeout(() => reject(new Error("Gemini resume parsing timeout (40s limit)")), 40000)
   );
 
   try {
@@ -689,9 +692,29 @@ function extractFallbackResume(text: string): ResumeDocument['parsedProfile'] {
     { name: "CI/CD", cat: "Cloud & DevOps" },
     { name: "Git", cat: "Cloud & DevOps" },
     { name: "Linux", cat: "Cloud & DevOps" },
-    { name: "Microservices", cat: "Architecture" },
-    { name: "Distributed Systems", cat: "Architecture" },
-    { name: "System Design", cat: "Architecture" },
+    { name: "C++", cat: "Backend" },
+    { name: "C#", cat: "Backend" },
+    { name: ".NET", cat: "Backend" },
+    { name: "Rust", cat: "Backend" },
+    { name: "PHP", cat: "Backend" },
+    { name: "Ruby", cat: "Backend" },
+    { name: "Kafka", cat: "Architecture" },
+    { name: "RabbitMQ", cat: "Architecture" },
+    { name: "Machine Learning", cat: "AI & Data" },
+    { name: "PyTorch", cat: "AI & Data" },
+    { name: "TensorFlow", cat: "AI & Data" },
+    { name: "NLP", cat: "AI & Data" },
+    { name: "LLM", cat: "AI & Data" },
+    { name: "Pandas", cat: "AI & Data" },
+    { name: "Spark", cat: "AI & Data" },
+    { name: "React Native", cat: "Mobile" },
+    { name: "Flutter", cat: "Mobile" },
+    { name: "Swift", cat: "Mobile" },
+    { name: "Kotlin", cat: "Mobile" },
+    { name: "Jest", cat: "Testing & Tools" },
+    { name: "Cypress", cat: "Testing & Tools" },
+    { name: "Jenkins", cat: "Cloud & DevOps" },
+    { name: "Agile/Scrum", cat: "Methods" },
   ];
 
   const matchedSkills: string[] = [];
@@ -699,8 +722,9 @@ function extractFallbackResume(text: string): ResumeDocument['parsedProfile'] {
 
   const lowerText = text.toLowerCase();
   for (const item of skillBank) {
-    const regex = new RegExp(`\\b${item.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
-    if (regex.test(lowerText) || lowerText.includes(item.name.toLowerCase())) {
+    const escaped = item.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`(?:^|[^a-zA-Z0-9+#])${escaped}(?:$|[^a-zA-Z0-9+#])`, 'i');
+    if (regex.test(text) || lowerText.includes(item.name.toLowerCase())) {
       if (!matchedSkills.includes(item.name)) {
         matchedSkills.push(item.name);
       }
@@ -709,6 +733,22 @@ function extractFallbackResume(text: string): ResumeDocument['parsedProfile'] {
       }
       if (!categorizedMap[item.cat].includes(item.name)) {
         categorizedMap[item.cat].push(item.name);
+      }
+    }
+  }
+
+  // Also parse explicit "Skills:" block if present
+  const skillsBlockMatch = text.match(/(?:skills|technical skills|technologies|competencies)[\s:]+([^\n\r]{10,400})/i);
+  if (skillsBlockMatch && skillsBlockMatch[1]) {
+    const parsedTokens = skillsBlockMatch[1]
+      .split(/[,|•·;/\n]/)
+      .map(s => s.trim().replace(/^[-*•]\s*/, ''))
+      .filter(s => s.length >= 2 && s.length <= 25 && !/skills|proficient|experience/i.test(s));
+    for (const token of parsedTokens) {
+      if (!matchedSkills.some(m => m.toLowerCase() === token.toLowerCase())) {
+        matchedSkills.push(token);
+        if (!categorizedMap["Core Skills"]) categorizedMap["Core Skills"] = [];
+        categorizedMap["Core Skills"].push(token);
       }
     }
   }

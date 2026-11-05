@@ -98,16 +98,16 @@ export const TopNav: React.FC<TopNavProps> = ({
 
           {/* Zone 3: Portal Switcher & Multi-User Session Switcher */}
           <div className="flex items-center gap-3 shrink-0">
-            {/* Direct Portal Toggle Button — admin portal visibility requires admin role */}
-            {user?.role === 'admin' ? (
+            {/* Direct Portal Toggle Button — admin portal visibility requires admin role or dev mode */}
+            {(user?.role === 'admin' || DEMO_UI_ENABLED) ? (
               activePortal === 'candidate' ? (
                 <button
                   onClick={() => setActivePortal('admin')}
                   className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-xs text-indigo-300 border border-indigo-900/60 transition-colors"
-                  title="Switch to Admin Console to inspect audit logs, 45d telemetry, and tenant manager"
+                  title="Switch to Admin Console & Key Vault"
                 >
-                  <Shield className="w-3.5 h-3.5 text-indigo-400" />
-                  <span className="font-semibold">Admin Console</span>
+                  <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="font-semibold">Admin &amp; Key Vault</span>
                 </button>
               ) : (
               <button
@@ -221,16 +221,33 @@ export const TopNav: React.FC<TopNavProps> = ({
 
                     <div className="mt-2 pt-2 border-t border-slate-800 px-2 space-y-2">
                       {user && (
-                        <button
-                          onClick={() => {
-                            setUserDropdownOpen(false);
-                            setShowChangePassword(true);
-                          }}
-                          className="w-full flex items-center gap-1.5 text-slate-300 hover:text-white transition-colors text-[11px] font-medium"
-                        >
-                          <KeyRound className="w-3.5 h-3.5 text-slate-400" />
-                          <span>Change Password</span>
-                        </button>
+                        <>
+                          <button
+                            onClick={() => {
+                              setUserDropdownOpen(false);
+                              if (activePortal === 'candidate') {
+                                setActivePortal('admin');
+                              } else {
+                                setActivePortal('candidate');
+                                setActiveTab('jobs');
+                              }
+                            }}
+                            className="w-full flex items-center gap-1.5 text-amber-300 hover:text-amber-200 transition-colors text-[11px] font-medium"
+                          >
+                            <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                            <span>{activePortal === 'candidate' ? 'Open Key Vault & Admin Console' : 'Switch to Candidate Portal'}</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setUserDropdownOpen(false);
+                              setShowChangePassword(true);
+                            }}
+                            className="w-full flex items-center gap-1.5 text-slate-300 hover:text-white transition-colors text-[11px] font-medium"
+                          >
+                            <Shield className="w-3.5 h-3.5 text-slate-400" />
+                            <span>Change Password</span>
+                          </button>
+                        </>
                       )}
                       <div className="flex items-center justify-between">
                         <button

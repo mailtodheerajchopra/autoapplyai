@@ -174,6 +174,29 @@ PORT=3000`}
 }`}
               </pre>
             </div>
+            <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-800/40 space-y-2">
+              <div className="flex items-center gap-2 text-amber-300 font-semibold text-xs">
+                <Lock className="w-4 h-4" />
+                <span>Handling Vercel's Masked Secrets (Zero-Loss Key Vault)</span>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Vercel permanently encrypts and masks environment variables (<code className="text-amber-300 font-mono">••••••••</code>) and does not permit copying them back out. If you cannot copy your keys from Vercel:
+              </p>
+              <ul className="list-disc list-inside space-y-1 text-xs text-slate-300">
+                <li>
+                  Open <span className="font-semibold text-white">Admin Console &gt; Key Vault &amp; Vercel Secrets</span>.
+                </li>
+                <li>
+                  Click <span className="font-semibold text-amber-400">Regenerate All App Keys</span> or regenerate specific secrets (<code className="text-indigo-300 font-mono">AUTH_SECRET</code>, <code className="text-indigo-300 font-mono">CRON_SECRET</code>, etc.).
+                </li>
+                <li>
+                  Click <span className="font-semibold text-emerald-400">Copy .env for Vercel</span> to copy the preformatted key-value block and paste it directly into Vercel's Project Settings.
+                </li>
+                <li>
+                  AutoApply AI automatically maintains persistent copies in the database, meaning the server runs without 401s even if you deploy without configuring variables manually!
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       )}

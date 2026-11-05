@@ -11,6 +11,7 @@ interface AuthContextType {
   availableUsers: { id: string; email: string; name: string; role: 'candidate' | 'admin' }[];
   demoPersonas: { id: string; email: string; name: string; role: 'candidate' | 'admin' }[];
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: (email: string, name?: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
   switchUser: (userId: string) => Promise<void>;
@@ -41,11 +42,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(me.profile);
           // Portal follows role on restore — admins land in the Admin Console.
           setActivePortal(me.user.role === 'admin' ? 'admin' : 'candidate');
-        } catch {
-          // If token invalid, auto-login demo user Alex Chen for frictionless testing
-          await autoLoginDemo();
+        } catch (authErr) {
+          console.warn("[auth] Session restore failed with stored token:", authErr);
+          // Clean invalid token without overwriting with demo persona
+          localStorage.removeItem('autoapply_auth_token');
+          setUser(null);
+          setProfile(null);
         }
-      } else {
+      } else if (personas.length > 0 && !localStorage.getItem('autoapply_explicit_logout')) {
+        // Frictionless exploration only on first visit when sandbox personas are available
         await autoLoginDemo();
       }
     } catch (err) {
@@ -85,9 +90,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const loginWithGoogle = async (email: string, name?: string) => {
+    setIsLoading(true);
+    try {
+      localStorage.removeItem('autoapply_explicit_logout');
+      const res = await api.loginGoogleDirect(email, name);
+      setUser(res.user);
+      setProfile(res.profile);
+      setActivePortal('candidate');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const register = async (name: string, email: string, password: string) => {
     setIsLoading(true);
     try {
+      localStorage.removeItem('autoapply_explicit_logout');
       const res = await api.register(name, email, password);
       setUser(res.user);
       setProfile(res.profile);
@@ -98,6 +117,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
+    localStorage.setItem('autoapply_explicit_logout', 'true');
     api.logout();
     setUser(null);
     setProfile(null);
@@ -107,6 +127,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const switchUser = async (userId: string) => {
     setIsLoading(true);
     try {
+      localStorage.removeItem('autoapply_explicit_logout');
       const res = await api.demoSwitch(userId);
       setUser(res.user);
       setProfile(res.profile);
@@ -151,6 +172,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         availableUsers: demoPersonas,
         demoPersonas,
         login,
+        loginWithGoogle,
         register,
         logout,
         switchUser,
