@@ -13,6 +13,7 @@ import { AuthModal } from './components/AuthModal';
 import { PrivacyPolicy, TermsOfService } from './components/LegalPages';
 import { JobPosting, WorkdayApplication, ResumeDocument, AgentRunLog } from './types';
 import { api } from './api';
+import { Analytics } from '@vercel/analytics/react';
 
 function MainDashboard() {
   const { user, activePortal, switchUser } = useAuth();
@@ -183,11 +184,14 @@ export default function App() {
   // Public legal pages (required for the Google OAuth consent-screen publish)
   // render standalone — no auth, no dashboard chrome.
   const path = window.location.pathname;
-  if (path === '/privacy') return <PrivacyPolicy />;
-  if (path === '/terms') return <TermsOfService />;
+  if (path === '/privacy') return <><Analytics /><PrivacyPolicy /></>;
+  if (path === '/terms') return <><Analytics /><TermsOfService /></>;
   return (
-    <AuthProvider>
-      <MainDashboard />
-    </AuthProvider>
+    <>
+      <Analytics />
+      <AuthProvider>
+        <MainDashboard />
+      </AuthProvider>
+    </>
   );
 }

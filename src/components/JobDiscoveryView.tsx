@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { track } from '@vercel/analytics';
 import { JobPosting, AgentRunLog, WorkdayApplication, ResumeDocument } from '../types';
 import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -91,6 +92,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
       const finish = async (payload: { fileName: string; fileType: 'pdf' | 'docx' | 'md' | 'txt'; contentBase64?: string; rawText?: string }) => {
         setGateStatus('AI is parsing skills, experience and employers — up to 30s…');
         await api.uploadResume(payload);
+        track('resume_upload', { surface: 'cv_gate', fileType: payload.fileType });
         await onRefreshResumes();
         await onRefreshJobs();
         setGateStatus('CV parsed — discovery engine activating…');
@@ -129,6 +131,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
         remoteOnly,
         minMatchScore: minMatch,
       });
+      track('discovery_run', { location: searchLocation.trim() || profile?.location || 'Remote', sources: selectedSources.length });
 
       // Cached results resolve on the spot — no polling needed.
       if (kickoff.status === 'completed') {

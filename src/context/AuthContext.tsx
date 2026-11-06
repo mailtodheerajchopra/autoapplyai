@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { track } from '@vercel/analytics';
 import { User, CandidateProfile } from '../types';
 import { api, getStoredToken } from '../api';
 
@@ -77,6 +78,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       const res = await api.login(email, password);
+      track('login', { role: res.user.role });
       setUser(res.user);
       setProfile(res.profile);
       if (res.user.role === 'admin') {
@@ -94,6 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       localStorage.removeItem('autoapply_explicit_logout');
       const res = await api.register(name, email, password);
+      track('register');
       setUser(res.user);
       setProfile(res.profile);
       setActivePortal('candidate');
