@@ -399,6 +399,21 @@ STRICT CANDIDATE SAFETY FILTERS:
 Generate 6 realistic, highly relevant job openings actively hiring in tech companies (including major enterprises using Workday like Adobe, Salesforce, Cisco, Netflix, Visa, Walmart, Indian enterprises like Infosys, TCS, Zoho, Razorpay, Swiggy, and listings seen on LinkedIn and Naukri — weight the mix toward the candidate's market per the geographic rule above).
 For each job, provide realistic job descriptions, exact required skills, portal type (specify 'workday' for enterprise company career sites, or 'greenhouse' / 'lever' / 'direct'), calculate an objective matchScore (0-100), identify matching skills, missing skills, postedDaysAgo (1-45), and provide a 1-sentence fit rationale.`;
 
+  // Tier 1: Groq (llama-3.3-70b) leads discovery — free-tier friendly and
+  // far faster per token than Gemini, and it conserves the scarce Gemini
+  // quota (~20 req/day) for quality-critical paths (CV parsing, match
+  // scoring). The Gemini chain below remains the fallback.
+  const discoverySystem = "You are an autonomous AI recruiter and job search agent. Output structured JSON matching current market roles and realistic ATS portal paths." + UNTRUSTED_DATA_RULE;
+  if (groqEnabled()) {
+    try {
+      const raw = await groqDiscoverJobs(prompt, discoverySystem, 30_000);
+      const recencyCap = searchOptions.recencyWindowDays ?? 45;
+      return { jobs: mapDiscoveredItems(raw, excludedList, profile, recencyCap), provider: groqModelName() };
+    } catch (groqErr) {
+      console.error("Groq discovery error - falling back to Gemini chain:", groqErr);
+    }
+  }
+
   try {
     const callPromise = generateWithModelChain({      model: MODEL_NAME,
       contents: prompt,
@@ -480,29 +495,7 @@ For each job, provide realistic job descriptions, exact required skills, portal 
   } catch (error) {
     console.error("Gemini job search error:", error);
 
-    // Tertiary tier: open-source model on Groq (free key) absorbs the scan
-    // when the whole Gemini chain is quota-exhausted. Same prompt, same
-    // sanitizer, same job-shape mapping — just a different inference host.
-    let groqNote = 'GROQ_API_KEY not set';
-    if (groqEnabled()) {
-      try {
-        console.warn("[discovery] degrading to Groq open-source tier:", groqModelName());
-        const raw = await groqDiscoverJobs(
-          prompt,
-          "You are an autonomous AI recruiter and job search agent. Output structured JSON matching current market roles and realistic ATS portal paths." + UNTRUSTED_DATA_RULE,
-          30_000,
-        );
-        const recencyCap = searchOptions.recencyWindowDays ?? 45;
-        return { jobs: mapDiscoveredItems(raw, excludedList, profile, recencyCap), provider: `${groqModelName()} (Gemini quota degraded)` };
-      } catch (groqErr) {
-        console.error("Groq fallback error:", groqErr);
-        // Surface the reason in the agent log's tier line so a misconfigured
-        // key/model is diagnosable from the UI instead of only server logs.
-        groqNote = `groq failed: ${String((groqErr as { message?: string })?.message || groqErr).slice(0, 120)}`;
-      }
-    }
-
-    return { jobs: getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45, searchOptions.location), provider: `mock-fallback (Gemini quota/busy; ${groqNote})` };
+    return { jobs: getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45, searchOptions.location), provider: `mock-fallback (Groq + Gemini unavailable)` };
   }
 }
 
