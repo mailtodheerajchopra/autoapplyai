@@ -184,6 +184,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               ? 'Already have an account? Sign In'
               : "Don't have an account? Register"}
           </button>
+          <div className="mt-2 text-[10px] text-slate-500">
+            By continuing you agree to our{' '}
+            <a href="/terms" target="_blank" rel="noreferrer" className="underline hover:text-slate-300">Terms</a>
+            {' '}and{' '}
+            <a href="/privacy" target="_blank" rel="noreferrer" className="underline hover:text-slate-300">Privacy Policy</a>.
+          </div>
         </div>
 
         {/* Quick Demo Switcher Section — dev-only (demo endpoints 404 in prod) */}
