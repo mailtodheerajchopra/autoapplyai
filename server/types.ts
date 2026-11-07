@@ -281,6 +281,13 @@ export interface DiscoveryOptions {
   remoteOnly?: boolean;
   minMatchScore?: number;
   /**
+   * Explicit target companies for the real-board tier (issue #10). Accepts
+   * "greenhouse:stripe", board URLs, or bare slugs ("stripe", "openai").
+   * When any target resolves, live Greenhouse/Lever/Ashby postings are used
+   * INSTEAD of AI generation (zero quota); the agent chain stays the fallback.
+   */
+  companies?: string[];
+  /**
    * Incremental-scan knob: when set (e.g. 2 for the cron sweeper), the model is
    * asked to return only postings from the last N days. Omitted for full
    * first-time scans, which cover the standard 45-day window.

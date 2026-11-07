@@ -797,13 +797,14 @@ apiRouter.post('/agent/discover', authMiddleware, async (req: Request, res: Resp
       return;
     }
 
-    const { keywords, sources, location, remoteOnly, minMatchScore } = req.body;
+    const { keywords, sources, location, remoteOnly, minMatchScore, companies } = req.body;
     const handle = startDiscovery(userId, {
       keywords,
       sources,
       location,
       remoteOnly,
       minMatchScore,
+      companies,
     });
 
     // DURABILITY: the poll may be served by a different lambda instance that

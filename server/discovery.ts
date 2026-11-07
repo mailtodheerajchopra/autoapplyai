@@ -18,7 +18,9 @@
 import { waitUntil } from '@vercel/functions';
 import crypto from 'crypto';
 import { db } from './db.js';
-import { discoverJobsWithAgent } from './gemini.js';import { CandidateProfile, DiscoveryJob, DiscoveryJobResult, DiscoveryOptions, JobPosting } from './types.js';
+import { discoverJobsWithAgent } from './gemini.js';
+import { filterBoardJobsByKeywords, resolveDiscoveryTargets, scanBoards, scoreBoardJob } from './boards.js';
+import { CandidateProfile, DiscoveryJob, DiscoveryJobResult, DiscoveryOptions, JobPosting } from './types.js';
 
 // ─── Tunables (free-tier aware) ──────────────────────────────────────────────
 const USER_COOLDOWN_MS = 45_000; // minimum spacing between agent runs per user
@@ -207,7 +209,7 @@ export function filterExperienceJobs<T extends { title?: string; description?: s
 
 function cacheKey(userId: string, profile: CandidateProfile, options: DiscoveryOptions): string {  const fingerprint = JSON.stringify({
     u: userId,
-    o: { k: options.keywords, s: options.sources, l: options.location, r: options.remoteOnly, m: options.minMatchScore },
+    o: { k: options.keywords, s: options.sources, l: options.location, r: options.remoteOnly, m: options.minMatchScore, c: options.companies },
     p: { skills: profile.primarySkills, cats: profile.skills?.map(c => c.items).flat().sort(), yrs: profile.yearsOfExperience, loc: profile.location },
     rev: profile.updatedAt,
   });
@@ -222,8 +224,57 @@ async function markStage(userId: string, jobId: string, status: DiscoveryJob['st
 async function executeDiscovery(userId: string, jobId: string, profile: CandidateProfile, options: DiscoveryOptions): Promise<{ result: DiscoveryJobResult; jobIds: string[] }> {
   await markStage(userId, jobId, 'running', 10, 'Scanning portals…');
 
-  const { jobs: rawDiscovered, provider } = await discoverJobsWithAgent(profile, options);
-  await markStage(userId, jobId, 'running', 55, `Parsed ${rawDiscovered.length} raw openings (AI tier: ${provider})`);
+  // Tier 0 — REAL JOB BOARDS (issue #10): when the run names companies we can
+  // read live (explicit options.companies or a keyword that is a known board),
+  // fetch real postings from Greenhouse/Lever/Ashby. Zero AI quota, real data.
+  // The strict filter chain below applies to board jobs EXACTLY as to AI jobs.
+  // If the boards yield nothing (no targets, 404s, timeouts, or keyword-miss),
+  // we fall through to the agent chain unchanged.
+  let rawDiscovered: Array<Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>> = [];
+  let provider = 'mock';
+  const boardTargets = resolveDiscoveryTargets({ companies: options.companies, keywords: options.keywords });
+  if (boardTargets.length) {
+    await markStage(userId, jobId, 'running', 20, `Checking ${boardTargets.length} live job board(s)…`);
+    const scan = await scanBoards(boardTargets);
+    const okBoards = scan.reports.filter((b) => b.status === 'ok');
+    console.log(`[discovery] boards: ${scan.reports.map((b) => `${b.target}=${b.status}/${b.count}`).join(', ') || 'none'}`);
+    const keywordRows = filterBoardJobsByKeywords(scan.jobs, options.keywords);
+    if (keywordRows.length) {
+      rawDiscovered = keywordRows.map((r) => {
+        const fit = scoreBoardJob(r, profile);
+        return {
+          company: r.company,
+          title: r.title,
+          location: r.location,
+          remoteType: r.remoteType,
+          employmentType: r.employmentType,
+          salaryRange: '',
+          source: 'Company Direct' as const,
+          sourceUrl: r.sourceUrl,
+          portalType: r.ats === 'ashby' ? 'direct' as const : r.ats,
+          description: r.description,
+          requiredSkills: fit.matchingSkills,
+          matchScore: fit.matchScore,
+          matchingSkills: fit.matchingSkills,
+          missingSkills: [],
+          fitRationale: fit.fitRationale,
+          status: 'discovered' as const,
+          postedDate: r.postedDate,
+          postedDaysAgo: r.postedDaysAgo,
+          isStale: false,
+          isConflictOfInterest: false,
+        };
+      });
+      provider = `boards:${okBoards.map((b) => b.ats).filter((v, i, a) => a.indexOf(v) === i).join('+') || 'none'}`;
+    }
+  }
+
+  if (!rawDiscovered.length) {
+    const agent = await discoverJobsWithAgent(profile, options);
+    rawDiscovered = agent.jobs;
+    provider = agent.provider;
+  }
+  await markStage(userId, jobId, 'running', 55, `Parsed ${rawDiscovered.length} raw openings (source: ${provider})`);
 
   // Share the scan: store the raw template in the shared pool so any user with
   // this market fingerprint reuses it (per-user filters apply at serve time).
@@ -311,7 +362,9 @@ async function executeDiscovery(userId: string, jobId: string, profile: Candidat
       ...newJobs.map((j) => `${j.company}: ${j.title} (${j.matchScore}% fit, Posted ${j.postedDaysAgo}d ago)`),
       ...(droppedStaleCount > 0 ? [`Discarded ${droppedStaleCount} postings older than 45 days`] : []),
       ...(droppedConflictCount > 0 ? [`Blocked ${droppedConflictCount} postings matching current employer/exclusions`] : []),
-      `AI tier: ${provider}${provider !== 'gemini-3.8-flash' ? ' — primary Gemini quota/busy, degraded per fallback chain' : ''}`,
+      provider.startsWith('boards:')
+        ? `Job source: ${provider} — live ATS boards, no agent quota used`
+        : `AI tier: ${provider}${provider !== 'gemini-3.8-flash' ? ' — primary Gemini quota/busy, degraded per fallback chain' : ''}`,
     ],
   });
 
@@ -510,7 +563,7 @@ const POOL_TTL_MS = 4 * 60 * 60_000; // entry freshness window (matches the cron
 /** Shared fingerprint — deliberately excludes userId and profile.updatedAt. */
 export function poolKeyOf(profile: CandidateProfile, options: DiscoveryOptions): string {
   const fp = JSON.stringify({
-    k: options.keywords, s: options.sources, l: options.location, r: options.remoteOnly, m: options.minMatchScore,
+    k: options.keywords, s: options.sources, l: options.location, r: options.remoteOnly, m: options.minMatchScore, c: options.companies,
     skills: profile.primarySkills,
     cats: profile.skills?.map((c) => c.items).flat().sort(),
     yrs: profile.yearsOfExperience,

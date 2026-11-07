@@ -238,6 +238,8 @@ export const api = {
     location?: string;
     remoteOnly?: boolean;
     minMatchScore?: number;
+    /** Target companies for the live-board tier ("stripe", "greenhouse:acme", board URLs). */
+    companies?: string[];
   }): Promise<{ jobId: string; status: 'queued' | 'running' | 'completed' | 'failed'; cached: boolean; result?: { jobsFound: number; staleJobsFiltered: number; conflictJobsBlocked: number }; pollUrl: string }> {
     return fetchWithAuth('/api/agent/discover', {
       method: 'POST',
