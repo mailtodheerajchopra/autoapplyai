@@ -1,0 +1,6 @@
+# ApplyMatica — Autonomous Job Search & Workday Review-to-Submit Platform
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://applymatica.com/sitemap.xml
