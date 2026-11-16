@@ -3,4 +3,4 @@ User-agent: *
 Allow: /
 Disallow: /api/
 
-Sitemap: https://applymatica.com/sitemap.xml
+Sitemap: https://www.applymatica.com/sitemap.xml
