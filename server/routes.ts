@@ -13,6 +13,7 @@ import { moderateResumeText } from './moderation.js';
 import {
   asHttpError, pollDiscovery, startDiscovery, sweepDiscoveryPool,
 } from './discovery.js';
+import { analyzeJobDescription } from './jd.js';
 import { JobPosting, WorkdayApplication, ResumeDocument, WorkdayCredentialAccount } from './types.js';
 import {
   getAuthSecret,
@@ -869,6 +870,33 @@ apiRouter.get('/jobs', authMiddleware, (req: Request, res: Response) => {
   const userId = req.user!.id;
   const jobs = db.getJobs(userId);
   res.json(jobs);
+});
+
+// Paste-a-JD tier: analyze ANY job description (text or URL) against the
+// profile — the always-works path when boards can't reach an employer
+// (Workday CXS is bot-walled, see boards.ts). AI extracts structure when a
+// key exists; scoring is always the deterministic boards convention.
+apiRouter.post('/jobs/analyze', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const profile = db.getProfile(userId);
+    const input = {
+      jobDescription: String(req.body?.jobDescription || '').slice(0, 30_000),
+      url: String(req.body?.url || '').slice(0, 2000),
+      title: String(req.body?.title || '').slice(0, 200),
+      company: String(req.body?.company || '').slice(0, 120),
+      location: String(req.body?.location || '').slice(0, 160),
+    };
+    if (!input.jobDescription && !input.url) {
+      res.status(400).json({ error: 'Paste a job description or give its URL.' });
+      return;
+    }
+    const { analysis, draft } = await analyzeJobDescription(input, profile);
+    res.json({ analysis, draft });
+  } catch (error) {
+    console.error('[jobs/analyze] failed:', error);
+    res.status(500).json({ error: 'Could not analyze the job description. Try pasting the raw text.' });
+  }
 });
 
 apiRouter.post('/jobs', authMiddleware, (req: Request, res: Response) => {

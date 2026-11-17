@@ -322,6 +322,83 @@ Provide a crisp professional headline and executive summary. The final profile f
 }
 
 /**
+ * Paste-a-JD tier: parse an arbitrary pasted job description into structured
+ * fields. Returns null when no Gemini key is configured or parsing fails —
+ * the caller (server/jd.ts) then falls back to deterministic keyword matching.
+ */
+export interface ParsedJobDescription {
+  title: string;
+  company: string;
+  location: string;
+  remoteType: 'Remote' | 'Hybrid' | 'On-site';
+  employmentType: 'Full-time' | 'Contract' | 'Part-time';
+  requiredSkills: string[];
+  niceToHaveSkills: string[];
+  minYearsExperience: number | null;
+}
+
+export function geminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY);
+}
+
+export async function parseJobDescriptionWithGemini(jdText: string): Promise<ParsedJobDescription | null> {
+  if (!geminiConfigured()) return null;
+  const plainText = sanitizeText(jdText, 24_000) as string;
+  if (!plainText || plainText.trim().length < 30) return null;
+
+  const systemInstruction = `You are an expert technical recruiter. Parse the provided job description text into structured fields.${UNTRUSTED_DATA_RULE}
+Extract the job title, hiring company, location, work arrangement (Remote/Hybrid/On-site), employment type (Full-time/Contract/Part-time), the concrete hard-requirement skills, and nice-to-have skills. Skills must be short canonical names (e.g. "Java", "Kubernetes", "Power BI"). If a field is genuinely not stated in the text, return an empty string / empty array / null — never invent one.`;
+
+  try {
+    const response = await generateWithModelChain({
+      model: MODEL_NAME,
+      contents: `Parse this job description into the requested JSON:\n\n${plainText}`,
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            company: { type: Type.STRING },
+            location: { type: Type.STRING },
+            remoteType: { type: Type.STRING, description: "Remote | Hybrid | On-site, or empty" },
+            employmentType: { type: Type.STRING, description: "Full-time | Contract | Part-time, or empty" },
+            requiredSkills: { type: Type.ARRAY, items: { type: Type.STRING } },
+            niceToHaveSkills: { type: Type.ARRAY, items: { type: Type.STRING } },
+            minYearsExperience: { type: Type.NUMBER },
+          },
+          required: ["title", "requiredSkills", "niceToHaveSkills"],
+        },
+      },
+    });
+
+    const parsed = deepSanitize(JSON.parse(response.text || "{}"));
+    const remote = ["Remote", "Hybrid", "On-site"].includes(parsed.remoteType) ? parsed.remoteType : "On-site";
+    const emp = ["Full-time", "Contract", "Part-time"].includes(parsed.employmentType) ? parsed.employmentType : "Full-time";
+    return {
+      title: String(parsed.title || "").slice(0, 140),
+      company: String(parsed.company || "").slice(0, 100),
+      location: String(parsed.location || "").slice(0, 140),
+      remoteType: remote as ParsedJobDescription["remoteType"],
+      employmentType: emp as ParsedJobDescription["employmentType"],
+      requiredSkills: Array.isArray(parsed.requiredSkills)
+        ? parsed.requiredSkills.map((s: unknown) => String(s).slice(0, 40)).filter(Boolean).slice(0, 25)
+        : [],
+      niceToHaveSkills: Array.isArray(parsed.niceToHaveSkills)
+        ? parsed.niceToHaveSkills.map((s: unknown) => String(s).slice(0, 40)).filter(Boolean).slice(0, 25)
+        : [],
+      minYearsExperience: typeof parsed.minYearsExperience === "number" && Number.isFinite(parsed.minYearsExperience)
+        ? Math.max(0, Math.min(40, parsed.minYearsExperience))
+        : null,
+    };
+  } catch (error) {
+    console.warn("[gemini] JD parse failed — falling back to deterministic matching:", (error as Error).message?.slice(0, 120));
+    return null;
+  }
+}
+
+/**
  * Autonomous Job Discovery Agent:
  * Discovers and computes matches for candidate against openings from LinkedIn, Naukri, Workday Portals, etc.
  */

@@ -211,6 +211,25 @@ export const api = {
     return fetchWithAuth('/api/jobs');
   },
 
+  /** Paste-a-JD tier: analyze a pasted description (or URL) against the profile. */
+  async analyzeJob(input: { jobDescription?: string; url?: string; title?: string; company?: string; location?: string }): Promise<{
+    analysis: {
+      matchedSkills: string[];
+      missingSkills: string[];
+      matchScore: number;
+      fitRationale: string;
+      minYearsExperience: number | null;
+      extractionSource: 'ai' | 'deterministic';
+      notes: string[];
+    };
+    draft: Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>;
+  }> {
+    return fetchWithAuth('/api/jobs/analyze', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+  },
+
   async addJob(job: Partial<JobPosting>): Promise<JobPosting> {
     return fetchWithAuth('/api/jobs', {
       method: 'POST',

@@ -16,6 +16,7 @@ import {
   DollarSign,
   Briefcase,
   FileUp,
+  ClipboardPaste,
 } from 'lucide-react';
 
 interface JobDiscoveryViewProps {
@@ -73,6 +74,54 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
     } else {
       setSelectedSources([...selectedSources, source]);
     }
+  };
+
+  // ─── Paste-a-JD tier: analyze any posting against the profile ───────────────
+  const [showPaste, setShowPaste] = useState(false);
+  const [jdText, setJdText] = useState('');
+  const [jdUrl, setJdUrl] = useState('');
+  const [jdTitle, setJdTitle] = useState('');
+  const [jdCompany, setJdCompany] = useState('');
+  const [isAnalyzingPaste, setIsAnalyzingPaste] = useState(false);
+  const [isSavingPaste, setIsSavingPaste] = useState(false);
+  const [pasteError, setPasteError] = useState<string | null>(null);
+  const [pasteResult, setPasteResult] = useState<Awaited<ReturnType<typeof api.analyzeJob>> | null>(null);
+
+  const handleAnalyzePaste = async () => {
+    setIsAnalyzingPaste(true);
+    setPasteError(null);
+    setPasteResult(null);
+    try {
+      const result = await api.analyzeJob({
+        jobDescription: jdText,
+        url: jdUrl,
+        title: jdTitle,
+        company: jdCompany,
+      });
+      setPasteResult(result);
+      track('jd_paste_analyze', { chars: jdText.length, hasUrl: !!jdUrl });
+    } catch (err) {
+      setPasteError(String((err as Error).message || 'Analysis failed').slice(0, 140));
+    }
+    setIsAnalyzingPaste(false);
+  };
+
+  const handleSavePaste = async () => {
+    if (!pasteResult) return;
+    setIsSavingPaste(true);
+    try {
+      await api.addJob(pasteResult.draft);
+      track('jd_paste_save');
+      await onRefreshJobs();
+      setPasteResult(null);
+      setJdText('');
+      setJdUrl('');
+      setJdTitle('');
+      setShowPaste(false);
+    } catch (err) {
+      setPasteError(String((err as Error).message || 'Could not save').slice(0, 140));
+    }
+    setIsSavingPaste(false);
   };
 
   // ─── CV Gate: a parsed resume is required before the agent may run ─────────
@@ -383,6 +432,105 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Paste-a-JD tier: match ANY posting (e.g. a Workday employer the live
+          boards can't read) against the parsed profile — analysis + save. */}
+      <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => setShowPaste((v) => !v)}
+            className="flex items-center gap-2 text-xs font-semibold text-slate-200 hover:text-white"
+          >
+            <ClipboardPaste className="w-4 h-4 text-indigo-400" />
+            <span className="uppercase tracking-wider text-[11px]">Paste a job description</span>
+            <span className="text-slate-500 normal-case tracking-normal font-normal">— match it to your CV, even Workday postings</span>
+          </button>
+          {showPaste && (
+            <button onClick={() => setShowPaste(false)} className="text-slate-500 hover:text-slate-300 text-xs">
+              collapse
+            </button>
+          )}
+        </div>
+
+        {showPaste && (
+          <div className="space-y-3">
+            <textarea
+              value={jdText}
+              onChange={(e) => setJdText(e.target.value)}
+              rows={7}
+              placeholder={'Paste the full job posting text here (title, requirements, everything)…\n\nOr just the URL below and we\'ll try to read it for you.'}
+              className="w-full p-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500 font-mono leading-relaxed"
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+              <input type="url" value={jdUrl} onChange={(e) => setJdUrl(e.target.value)} placeholder="Posting URL (optional)"
+                className="h-9 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500 sm:col-span-2" />
+              <input type="text" value={jdTitle} onChange={(e) => setJdTitle(e.target.value)} placeholder="Job title (optional)"
+                className="h-9 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500" />
+              <input type="text" value={jdCompany} onChange={(e) => setJdCompany(e.target.value)} placeholder="Company (optional)"
+                className="h-9 px-3 rounded-lg bg-slate-950 border border-slate-800 text-xs text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500" />
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleAnalyzePaste}
+                disabled={isAnalyzingPaste || (!jdText.trim() && !jdUrl.trim())}
+                className="h-9 px-4 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-xs font-semibold text-white transition-colors flex items-center gap-2"
+              >
+                {isAnalyzingPaste ? (
+                  <><div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" /><span>Analyzing…</span></>
+                ) : (
+                  <><Sparkles className="w-3.5 h-3.5" /><span>Analyze match</span></>
+                )}
+              </button>
+              {pasteError && <span className="text-xs text-rose-400">{pasteError}</span>}
+            </div>
+
+            {pasteResult && (
+              <div className="p-4 rounded-lg bg-slate-950 border border-slate-800 space-y-3">
+                <div className="flex items-baseline gap-3">
+                  <span className="text-3xl font-bold font-mono tabular-nums text-white">{pasteResult.draft.matchScore}</span>
+                  <span className="text-xs text-slate-400">/ 92 · {pasteResult.analysis.extractionSource === 'ai' ? 'AI-parsed posting' : 'direct keyword match'}</span>
+                  {pasteResult.analysis.minYearsExperience !== null && (
+                    <span className="text-xs text-slate-400">· asks for {pasteResult.analysis.minYearsExperience}+ yrs</span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-300">{pasteResult.analysis.fitRationale}</p>
+
+                {pasteResult.analysis.matchedSkills.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {pasteResult.analysis.matchedSkills.map((s) => (
+                      <span key={s} className="px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/60 text-[11px] text-emerald-300">✓ {s}</span>
+                    ))}
+                  </div>
+                )}
+                {pasteResult.analysis.missingSkills.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {pasteResult.analysis.missingSkills.map((s) => (
+                      <span key={s} className="px-2 py-0.5 rounded bg-amber-950/50 border border-amber-800/60 text-[11px] text-amber-300">△ {s}</span>
+                    ))}
+                  </div>
+                )}
+                {pasteResult.analysis.notes.map((n, i) => (
+                  <p key={i} className="text-[11px] text-slate-500">· {n}</p>
+                ))}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={handleSavePaste}
+                    disabled={isSavingPaste}
+                    className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-[11px] font-semibold text-white flex items-center gap-1.5"
+                  >
+                    {isSavingPaste ? 'Saving…' : <><CheckCircle2 className="w-3.5 h-3.5" />Save to my jobs</>}
+                  </button>
+                  <span className="text-[11px] text-slate-500">
+                    {pasteResult.draft.title} · {pasteResult.draft.company || 'company unknown'} · saved as Company Direct
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Agent Logs Drawer */}
