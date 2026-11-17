@@ -124,7 +124,7 @@ export interface JobPosting {
   salaryRange: string;
   source: 'LinkedIn' | 'Naukri' | 'Workday Portal' | 'Indeed' | 'Company Direct';
   sourceUrl: string;
-  portalType: 'workday' | 'greenhouse' | 'lever' | 'taleo' | 'direct';
+  portalType: 'workday' | 'greenhouse' | 'lever' | 'taleo' | 'direct' | 'ashby' | 'smartrecruiters' | 'workable' | 'recruitee';
   workdayTenantId?: string;
   description: string;
   requiredSkills: string[];

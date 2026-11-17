@@ -19,6 +19,33 @@
  *   - Ashby:       GET https://api.ashbyhq.com/posting-api/job-board/{org}
  *                  Returns { jobs: [...] } with descriptionPlain, isRemote,
  *                  publishedAt, jobUrl. No POST/auth needed.
+ *   - SmartRecruiters: GET https://api.smartrecruiters.com/v1/companies/{token}/postings?limit=25
+ *                  Verified live 2026-11-17 (bosch/BoschGroup → 5,049 postings).
+ *                  List rows carry id/name/releasedDate/location.fullLocation/
+ *                  typeOfEmployment/company.name but NO description — the
+ *                  scanner enriches the top rows from the detail endpoint
+ *                  (.../postings/{id}, jobAd.sections[].text, HTML).
+ *                  Public job page: https://jobs.smartrecruiters.com/{token}/{id}.
+ *   - Workable:    GET https://apply.workable.com/api/v1/widget/accounts/{token}?details=true
+ *                  Verified live 2026-11-17 (usercentrics → 46 jobs). Rows carry
+ *                  shortcode/title/employment_type/url/published_on/locations[]/
+ *                  description(HTML); telecommuting=true ⇒ Remote. The account
+ *                  display name rides on the TOP-LEVEL `name` (not on rows).
+ *                  404 for unknown accounts. (jobs.workable.com/api/v1/jobs is
+ *                  a global 171k-job search feed — a separate future source.)
+ *   - Recruitee:   GET https://{token}.recruitee.com/api/offers/
+ *                  Verified live 2026-11-17 (bunq → 24 offers). Rows carry
+ *                  id/title/company_name/location/description(HTML)/careers_url/
+ *                  published_at ("2026-11-16 16:33:49 UTC")/remote/hybrid/on_site.
+ *   - Workday:     DELIBERATELY NOT ADAPTERED. The CXS search API
+ *                  ({tenant}.wd{n}.myworkdayjobs.com/wday/cxs/...) is behind
+ *                  Cloudflare bot management: every server-side POST (Node and
+ *                  by extension serverless) gets 429-challenged on ALL tenants
+ *                  verified 2026-11-17 (browser fetch succeeds, but responses
+ *                  carry no CORS headers, so client-side fetch from our origin
+ *                  is blocked too). Only per-tenant WAF config varies. Workday
+ *                  employers are covered instead by paste-a-JD matching + the
+ *                  Workday autofill engine.
  *
  * Failure contract (deliberate):
  *   - 404            → 'not_found': the token is wrong or the company moved
@@ -31,8 +58,11 @@
 
 // ─── Target parsing ──────────────────────────────────────────────────────────
 
-export type BoardAts = 'greenhouse' | 'lever' | 'ashby';
+export type BoardAts = 'greenhouse' | 'lever' | 'ashby' | 'smartrecruiters' | 'workable' | 'recruitee';
 export type ProbeAts = BoardAts | 'probe'; // 'probe' = try every ATS in order
+
+/** Order 'probe' targets try each ATS. Public boards first, niche ones after. */
+const PROBE_ORDER: BoardAts[] = ['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workable', 'recruitee'];
 
 export interface BoardTarget {
   ats: ProbeAts;
@@ -68,6 +98,12 @@ export const WELL_KNOWN_BOARDS: Record<string, BoardTarget> = {
   ramp:       { ats: 'ashby', token: 'ramp',   label: 'Ramp (ashby)' },
   deel:       { ats: 'ashby', token: 'deel',   label: 'Deel (ashby)' },
   linear:     { ats: 'ashby', token: 'linear', label: 'Linear (ashby)' },
+  // SmartRecruiters
+  bosch:      { ats: 'smartrecruiters', token: 'BoschGroup',   label: 'Bosch (smartrecruiters)' },
+  // Workable
+  usercentrics: { ats: 'workable', token: 'usercentrics', label: 'Usercentrics (workable)' },
+  // Recruitee
+  bunq:       { ats: 'recruitee', token: 'bunq', label: 'bunq (recruitee)' },
 };
 
 const ATS_OF_URL: Array<[RegExp, BoardAts]> = [
@@ -77,6 +113,11 @@ const ATS_OF_URL: Array<[RegExp, BoardAts]> = [
   [/jobs\.lever\.co\/([^/?#]+)/i, 'lever'],
   [/jobs\.ashbyhq\.com\/([^/?#]+)/i, 'ashby'],
   [/api\.ashbyhq\.com\/posting-api\/job-board\/([^/?#]+)/i, 'ashby'],
+  [/api\.smartrecruiters\.com\/v1\/companies\/([^/?#]+)/i, 'smartrecruiters'],
+  [/(?:jobs|careers)\.smartrecruiters\.com\/([^/?#]+)/i, 'smartrecruiters'],
+  [/apply\.workable\.com\/api\/v\d+\/widget\/accounts\/([^/?#]+)/i, 'workable'],
+  [/apply\.workable\.com\/(?!api\/|j\/)([^/?#]+)/i, 'workable'],
+  [/([a-z0-9-]+)\.recruitee\.com/i, 'recruitee'],
 ];
 
 /**
@@ -92,7 +133,7 @@ export function parseBoardTargets(inputs: string[]): BoardTarget[] {
     if (!input) continue;
 
     // ats:slug
-    const prefixed = input.match(/^(greenhouse|lever|ashby)[:/](.+)$/i);
+    const prefixed = input.match(/^(greenhouse|lever|ashby|smartrecruiters|workable|recruitee)[:/](.+)$/i);
     if (prefixed) {
       const ats = prefixed[1].toLowerCase() as BoardAts;
       const token = prefixed[2].replace(/\/+$/, '').trim().toLowerCase();
@@ -101,7 +142,7 @@ export function parseBoardTargets(inputs: string[]): BoardTarget[] {
     }
 
     // URL
-    if (/https?:\/\//i.test(input) || /\.(greenhouse|lever|ashby)/i.test(input)) {
+    if (/https?:\/\//i.test(input) || /\.(greenhouse|lever|ashby|smartrecruiters|workable|recruitee)\./i.test(input)) {
       for (const [re, ats] of ATS_OF_URL) {
         const m = input.match(re);
         if (m && m[1]) {
@@ -283,6 +324,78 @@ export function normalizeAshbyRow(row: any, token: string, nowMs = Date.now()): 
   };
 }
 
+/** description comes from the detail endpoint's jobAd.sections (see scanBoards). */
+export function normalizeSmartRecruitersRow(row: any, token: string, nowMs = Date.now(), description = ''): RawBoardJob | null {
+  if (!row || !row.id || !row.name) return null;
+  const location = String(row.location?.fullLocation || row.location?.city || '').trim() || 'Not specified';
+  const age = daysSince(row.releasedDate, nowMs);
+  return {
+    company: String(row.company?.name || token).trim(),
+    title: String(row.name).trim(),
+    location,
+    remoteType: remoteTypeOf(location, row.location?.remote === true),
+    employmentType: employmentTypeOf(row.typeOfEmployment?.label),
+    // List rows carry no public URL — the canonical job page path is stable.
+    sourceUrl: String(row.applyUrl || row.postingUrl || `https://jobs.smartrecruiters.com/${token}/${row.id}`),
+    description: clampDescription(description),
+    postedDate: new Date(nowMs - (age ?? 10) * 86_400_000).toISOString(),
+    postedDaysAgo: age ?? 10,
+    ats: 'smartrecruiters',
+    dedupeKey: `smartrecruiters:${token}:${row.id}`,
+  };
+}
+
+/** accountName is the widget's top-level `name` (rows don't repeat it). */
+export function normalizeWorkableRow(row: any, token: string, nowMs = Date.now(), accountName = ''): RawBoardJob | null {
+  if (!row || !row.shortcode || !row.title) return null;
+  const location = (Array.isArray(row.locations) && row.locations.length
+    ? row.locations
+        .map((l: any) => [l.city, l.region, l.country].filter(Boolean).join(', '))
+        .filter(Boolean)
+        .join(' / ')
+    : String(row.country || '').trim()
+  ) || 'Not specified';
+  const age = daysSince(row.published_on, nowMs);
+  const company = String(accountName || token).trim();
+  return {
+    company,
+    title: String(row.title).trim(),
+    location,
+    remoteType: remoteTypeOf(location, row.telecommuting === true),
+    employmentType: employmentTypeOf(row.employment_type),
+    sourceUrl: String(row.url || row.shortlink || `https://apply.workable.com/j/${row.shortcode}`),
+    description: clampDescription(stripHtml(String(row.description || ''))),
+    postedDate: new Date(nowMs - (age ?? 10) * 86_400_000).toISOString(),
+    postedDaysAgo: age ?? 10,
+    ats: 'workable',
+    dedupeKey: `workable:${token}:${row.shortcode}`,
+  };
+}
+
+export function normalizeRecruiteeRow(row: any, token: string, nowMs = Date.now()): RawBoardJob | null {
+  if (!row || !row.id || !row.title) return null;
+  const location = String(row.location || '').trim() || 'Not specified';
+  // remote/hybrid/on_site are mutually-exclusive flags on recruitee offers.
+  const remoteType: RawBoardJob['remoteType'] =
+    row.remote === true ? 'Remote'
+    : row.hybrid === true ? 'Hybrid'
+    : remoteTypeOf(location);
+  const age = daysSince(String(row.published_at || '').replace(' UTC', 'Z'), nowMs);
+  return {
+    company: String(row.company_name || token).trim(),
+    title: String(row.title).trim(),
+    location,
+    remoteType,
+    employmentType: employmentTypeOf(String(row.employment_type_code || '').replace(/_/g, '-')),
+    sourceUrl: String(row.careers_url || row.careers_apply_url || `https://${token}.recruitee.com/o/${row.slug}`),
+    description: clampDescription(stripHtml(String(row.description || row.requirements || ''))),
+    postedDate: new Date(nowMs - (age ?? 10) * 86_400_000).toISOString(),
+    postedDaysAgo: age ?? 10,
+    ats: 'recruitee',
+    dedupeKey: `recruitee:${token}:${row.id}`,
+  };
+}
+
 // ─── Fetch layer ─────────────────────────────────────────────────────────────
 
 type FetchImpl = (url: string, init?: { signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; json: () => Promise<any> }>;
@@ -301,6 +414,42 @@ export interface BoardScan {
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000;
+
+function urlFor(ats: BoardAts, token: string): string {
+  switch (ats) {
+    case 'greenhouse':      return `https://boards-api.greenhouse.io/v1/boards/${token}/jobs?content=true`;
+    case 'lever':           return `https://api.lever.co/v0/postings/${token}?mode=json`;
+    case 'ashby':           return `https://api.ashbyhq.com/posting-api/job-board/${token}`;
+    case 'smartrecruiters': return `https://api.smartrecruiters.com/v1/companies/${token}/postings?limit=25`;
+    case 'workable':        return `https://apply.workable.com/api/v1/widget/accounts/${token}?details=true`;
+    case 'recruitee':       return `https://${token}.recruitee.com/api/offers/`;
+  }
+}
+
+/**
+ * SmartRecruiters list rows ship no description; the detail endpoint
+ * (.../postings/{id}) has it under jobAd.sections[].text (HTML). Enrich the
+ * rows we'll actually keep (≤ maxPerCompany), in parallel, each failure
+ * tolerated (description just stays empty). Bounded: one request per row.
+ */
+async function enrichSmartRecruitersDescriptions(
+  rows: any[], token: string, fetchImpl: FetchImpl, timeoutMs: number, maxRows: number,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  await Promise.all(rows.slice(0, maxRows).map(async (row) => {
+    const res = await getJson(`https://api.smartrecruiters.com/v1/companies/${token}/postings/${row.id}`, fetchImpl, timeoutMs)
+      .catch(() => null);
+    if (!res || res.status !== 'ok') return;
+    const sections = res.data?.jobAd?.sections;
+    if (!sections || typeof sections !== 'object') return;
+    const text = Object.values(sections as Record<string, any>)
+      .map((s) => [s?.title, stripHtml(String(s?.text || ''))].filter(Boolean).join('\n'))
+      .filter(Boolean)
+      .join('\n\n');
+    if (text) out.set(String(row.id), text);
+  }));
+  return out;
+}
 
 async function getJson(url: string, fetchImpl: FetchImpl, timeoutMs: number): Promise<
   { status: 'ok'; data: any } | { status: 'not_found' } | { status: 'error'; note: string }
@@ -349,15 +498,10 @@ export async function scanBoards(
   };
 
   for (const target of targets) {
-    const attempts: BoardAts[] = target.ats === 'probe' ? ['greenhouse', 'lever', 'ashby'] : [target.ats as BoardAts];
+    const attempts: BoardAts[] = target.ats === 'probe' ? PROBE_ORDER : [target.ats as BoardAts];
     let settled = false;
     for (const ats of attempts) {
-      const url =
-        ats === 'greenhouse' ? `https://boards-api.greenhouse.io/v1/boards/${target.token}/jobs?content=true`
-        : ats === 'lever' ? `https://api.lever.co/v0/postings/${target.token}?mode=json`
-        : `https://api.ashbyhq.com/posting-api/job-board/${target.token}`;
-
-      const res = await getJson(url, fetchImpl, timeoutMs);
+      const res = await getJson(urlFor(ats, target.token), fetchImpl, timeoutMs);
       if (res.status === 'not_found') {
         // Token wrong / company moved ATS — try the next ATS for probes, else skip.
         if (target.ats === 'probe') continue;
@@ -375,9 +519,23 @@ export async function scanBoards(
 
       const data = res.data;
       let count = 0;
-      if (ats === 'greenhouse') count = collect(data?.jobs || [], ats, target.token, normalizeGreenhouseRow);
-      else if (ats === 'lever') count = collect(Array.isArray(data) ? data : [], ats, target.token, normalizeLeverRow);
-      else count = collect(data?.jobs || [], ats, target.token, normalizeAshbyRow);
+      if (ats === 'greenhouse') {
+        count = collect(data?.jobs || [], ats, target.token, normalizeGreenhouseRow);
+      } else if (ats === 'lever') {
+        count = collect(Array.isArray(data) ? data : [], ats, target.token, normalizeLeverRow);
+      } else if (ats === 'ashby') {
+        count = collect(data?.jobs || [], ats, target.token, normalizeAshbyRow);
+      } else if (ats === 'smartrecruiters') {
+        const rows = data?.content || [];
+        const descs = await enrichSmartRecruitersDescriptions(rows, target.token, fetchImpl, timeoutMs, maxPerCompany);
+        count = collect(rows, ats, target.token, (r, t, n) => normalizeSmartRecruitersRow(r, t, n, descs.get(String(r.id)) || ''));
+      } else if (ats === 'workable') {
+        // Account display name lives at the top level, not on rows.
+        const accountName = String(data?.name || '');
+        count = collect(data?.jobs || [], ats, target.token, (r, t, n) => normalizeWorkableRow(r, t, n, accountName));
+      } else {
+        count = collect(data?.offers || [], ats, target.token, normalizeRecruiteeRow);
+      }
 
       reports.push({ target: target.label, ats, status: 'ok', count });
       if (count > 0 || target.ats !== 'probe') { settled = true; break; }

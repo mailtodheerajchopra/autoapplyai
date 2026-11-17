@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseBoardTargets, resolveDiscoveryTargets, stripHtml, clampDescription, daysSince,
   normalizeGreenhouseRow, normalizeLeverRow, normalizeAshbyRow,
+  normalizeSmartRecruitersRow, normalizeWorkableRow, normalizeRecruiteeRow,
   scanBoards, filterBoardJobsByKeywords, scoreBoardJob, WELL_KNOWN_BOARDS,
 } from '../server/boards.js';
 import type { BoardTarget } from '../server/boards.js';
@@ -22,8 +23,15 @@ describe('parseBoardTargets', () => {
       'https://job-boards.greenhouse.io/anthropic/jobs/123',
       'https://jobs.lever.co/palantir',
       'https://jobs.ashbyhq.com/ramp',
+      'https://jobs.smartrecruiters.com/BoschGroup/744000162003979',
+      'https://apply.workable.com/usercentrics',
+      'https://apply.workable.com/api/v1/widget/accounts/usercentrics?details=true',
+      'https://bunq.recruitee.com/api/offers/',
     ]);
-    expect(t.map((x) => `${x.ats}:${x.token}`)).toEqual(['greenhouse:anthropic', 'lever:palantir', 'ashby:ramp']);
+    expect(t.map((x) => `${x.ats}:${x.token}`)).toEqual([
+      'greenhouse:anthropic', 'lever:palantir', 'ashby:ramp',
+      'smartrecruiters:boschgroup', 'workable:usercentrics', 'recruitee:bunq',
+    ]);
   });
 
   it('resolves known bare slugs and marks unknown ones for probing', () => {
@@ -149,6 +157,112 @@ describe('normalizeAshbyRow', () => {
   });
 });
 
+describe('normalizeSmartRecruitersRow', () => {
+  const row = {
+    id: '744000162003979',
+    name: 'Product Development Project Manager',
+    company: { identifier: 'BoschGroup', name: 'Bosch Group' },
+    releasedDate: '2026-11-02T06:57:41.369Z',
+    location: { city: 'Hangzhou', region: 'Zhejiang', country: 'cn', remote: false, fullLocation: 'Hangzhou, Zhejiang, China' },
+    typeOfEmployment: { id: 'permanent', label: 'Full-time' },
+  };
+
+  it('uses company.name, fullLocation, releasedDate and the public job page URL', () => {
+    const j = normalizeSmartRecruitersRow(row, 'boschgroup', NOW)!;
+    expect(j.company).toBe('Bosch Group');
+    expect(j.location).toBe('Hangzhou, Zhejiang, China');
+    expect(j.postedDaysAgo).toBe(5);
+    expect(j.employmentType).toBe('Full-time');
+    expect(j.sourceUrl).toBe('https://jobs.smartrecruiters.com/boschgroup/744000162003979');
+    expect(j.dedupeKey).toBe('smartrecruiters:boschgroup:744000162003979');
+    expect(j.remoteType).toBe('On-site');
+  });
+
+  it('flags remote postings and falls back to the token for company', () => {
+    const j = normalizeSmartRecruitersRow({ ...row, company: undefined, location: { ...row.location, remote: true, fullLocation: undefined } }, 'boschgroup', NOW)!;
+    expect(j.company).toBe('boschgroup');
+    expect(j.location).toBe('Hangzhou'); // city fallback
+    expect(j.remoteType).toBe('Remote');
+  });
+
+  it('returns null for blank rows', () => {
+    expect(normalizeSmartRecruitersRow(null, 'x', NOW)).toBeNull();
+    expect(normalizeSmartRecruitersRow({ id: 1 }, 'x', NOW)).toBeNull();
+  });
+});
+
+describe('normalizeWorkableRow', () => {
+  const row = {
+    shortcode: '8B9973C80B',
+    title: 'Account Executive (m/f/d)',
+    employment_type: 'Full-time',
+    telecommuting: false,
+    url: 'https://apply.workable.com/j/8B9973C80B',
+    published_on: '2026-11-02',
+    locations: [{ country: 'Czechia', countryCode: 'CZ', city: 'Prague', region: 'Prague' }],
+    description: '<p>Hybrid — 2-3 days in office. <strong>Privacy</strong> is the product.</p>',
+  };
+
+  it('joins locations, reads employment_type and the top-level account name', () => {
+    const j = normalizeWorkableRow(row, 'usercentrics', NOW, 'Usercentrics')!;
+    expect(j.company).toBe('Usercentrics');
+    expect(j.location).toBe('Prague, Prague, Czechia');
+    expect(j.remoteType).toBe('On-site');
+    expect(j.employmentType).toBe('Full-time');
+    expect(j.postedDaysAgo).toBe(5);
+    expect(j.sourceUrl).toBe('https://apply.workable.com/j/8B9973C80B');
+    expect(j.description).toContain('Privacy');
+    expect(j.dedupeKey).toBe('workable:usercentrics:8B9973C80B');
+  });
+
+  it('maps telecommuting to Remote and survives missing account name', () => {
+    const j = normalizeWorkableRow({ ...row, telecommuting: true, locations: [] }, 'someco', NOW)!;
+    expect(j.company).toBe('someco');
+    expect(j.remoteType).toBe('Remote');
+  });
+
+  it('returns null for blank rows', () => {
+    expect(normalizeWorkableRow(null, 'x', NOW)).toBeNull();
+    expect(normalizeWorkableRow({ title: 'x' }, 'x', NOW)).toBeNull(); // no shortcode
+  });
+});
+
+describe('normalizeRecruiteeRow', () => {
+  const row = {
+    id: 123,
+    title: 'Senior Compliance Officer',
+    company_name: 'bunq',
+    location: 'London, England, United Kingdom',
+    published_at: '2026-11-02 16:33:49 UTC',
+    careers_url: 'https://careers.bunq.com/o/senior-compliance-officer',
+    description: '<p>Be the person who takes bunq to the UK.</p>',
+    remote: false,
+    hybrid: false,
+    employment_type_code: 'permanent',
+  };
+
+  it('uses company_name, published_at (UTC suffix) and careers_url', () => {
+    const j = normalizeRecruiteeRow(row, 'bunq', NOW)!;
+    expect(j.company).toBe('bunq');
+    expect(j.location).toBe('London, England, United Kingdom');
+    expect(j.postedDaysAgo).toBe(4); // Nov 2 16:33Z → Nov 7 12:00Z
+    expect(j.employmentType).toBe('Full-time'); // 'permanent' maps to Full-time
+    expect(j.sourceUrl).toBe('https://careers.bunq.com/o/senior-compliance-officer');
+    expect(j.description).toBe('Be the person who takes bunq to the UK.');
+    expect(j.dedupeKey).toBe('recruitee:bunq:123');
+  });
+
+  it('maps the remote/hybrid flags', () => {
+    expect(normalizeRecruiteeRow({ ...row, remote: true }, 'bunq', NOW)!.remoteType).toBe('Remote');
+    expect(normalizeRecruiteeRow({ ...row, remote: false, hybrid: true }, 'bunq', NOW)!.remoteType).toBe('Hybrid');
+  });
+
+  it('returns null for blank rows', () => {
+    expect(normalizeRecruiteeRow(null, 'x', NOW)).toBeNull();
+    expect(normalizeRecruiteeRow({ id: 1 }, 'x', NOW)).toBeNull();
+  });
+});
+
 // Minimal Response shim for the injected fetch — no network in tests.
 const jsonResponse = (status: number, body: any) => ({
   ok: status >= 200 && status < 300,
@@ -207,6 +321,51 @@ describe('scanBoards', () => {
     const impl = async () => jsonResponse(200, { meta: { total: 40 }, jobs: many });
     const scan = await scanBoards([ghTarget('stripe')], { fetchImpl: impl, nowMs: NOW, maxPerCompany: 25 });
     expect(scan.jobs).toHaveLength(25);
+  });
+
+  it('scans workable + smartrecruiters targets, enriching SR descriptions', async () => {
+    const impl = async (url: string) => {
+      if (url.includes('api/v1/widget/accounts/usercentrics')) return jsonResponse(200, { name: 'Usercentrics', jobs: [
+        { shortcode: 'A1', title: 'Privacy Engineer', employment_type: 'Full-time', telecommuting: false,
+          url: 'u1', published_on: '2026-11-05', locations: [{ city: 'Berlin', country: 'Germany' }], description: '<p>GDPR</p>' },
+      ]});
+      if (url.includes('/postings?limit=25')) return jsonResponse(200, { totalFound: 1, content: [
+        { id: 'sr1', name: 'PM', company: { name: 'Bosch Group' }, releasedDate: '2026-11-05T00:00:00Z', location: { city: 'X' } },
+      ]});
+      if (url.includes('/postings/sr1')) return jsonResponse(200, { jobAd: { sections: { about: { title: 'About', text: '<p>Systems</p>' } } } });
+      throw new Error('unexpected ' + url);
+    };
+    const scan = await scanBoards([
+      { ats: 'workable', token: 'usercentrics', label: 'Usercentrics (workable)' },
+      { ats: 'smartrecruiters', token: 'boschgroup', label: 'Bosch (smartrecruiters)' },
+    ], { fetchImpl: impl, nowMs: NOW });
+    expect(scan.reports).toEqual([
+      { target: 'Usercentrics (workable)', ats: 'workable', status: 'ok', count: 1 },
+      { target: 'Bosch (smartrecruiters)', ats: 'smartrecruiters', status: 'ok', count: 1 },
+    ]);
+    const wr = scan.jobs.find((j) => j.ats === 'workable')!;
+    expect(wr.company).toBe('Usercentrics'); // top-level account name, not the token
+    const sr = scan.jobs.find((j) => j.ats === 'smartrecruiters')!;
+    expect(sr.description).toContain('Systems'); // came from the detail endpoint
+    expect(sr.sourceUrl).toContain('jobs.smartrecruiters.com');
+  });
+
+  it('probe walks all six ATS (in order) before reporting no board', async () => {
+    const urls: string[] = [];
+    const impl = async (url: string) => { urls.push(url); return jsonResponse(404, {}); };
+    const scan = await scanBoards([probeTarget('acme')], { fetchImpl: impl, nowMs: NOW });
+    expect(scan.jobs).toHaveLength(0);
+    expect(scan.reports).toEqual([
+      { target: 'acme (probe)', ats: null, status: 'not_found', count: 0, note: 'no public board found' },
+    ]);
+    expect(urls).toEqual([
+      'https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true',
+      'https://api.lever.co/v0/postings/acme?mode=json',
+      'https://api.ashbyhq.com/posting-api/job-board/acme',
+      'https://api.smartrecruiters.com/v1/companies/acme/postings?limit=25',
+      'https://apply.workable.com/api/v1/widget/accounts/acme?details=true',
+      'https://acme.recruitee.com/api/offers/',
+    ]);
   });
 });
 
