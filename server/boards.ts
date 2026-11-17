@@ -106,6 +106,17 @@ export const WELL_KNOWN_BOARDS: Record<string, BoardTarget> = {
   bunq:       { ats: 'recruitee', token: 'bunq', label: 'bunq (recruitee)' },
 };
 
+/**
+ * Default boards for runs that name no companies: a curated set spanning all
+ * six supported ATS so a fresh user sees real live postings without typing
+ * anything. These are global tech employers (remote-friendly, English posts);
+ * verified live 2026-11: BoschGroup 5,049 postings, usercentrics 46, bunq 24.
+ */
+export const DEFAULT_BOARD_TARGETS: string[] = [
+  'stripe', 'anthropic', 'openai', 'ramp', 'palantir', 'linear',
+  'bosch', 'usercentrics', 'bunq',
+];
+
 const ATS_OF_URL: Array<[RegExp, BoardAts]> = [
   [/boards-api\.greenhouse\.io\/v1\/boards\/([^/?#]+)/i, 'greenhouse'],
   [/(?:job-)?boards\.greenhouse\.io\/([^/?#]+)/i, 'greenhouse'],

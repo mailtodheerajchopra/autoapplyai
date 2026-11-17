@@ -13,18 +13,24 @@
  *     inline by the next status poll — idempotent via the job record.
  *   - Free-tier Gemini quota is shielded three ways: per-user cooldown,
  *     a short-lived result cache (repeat clicks cost nothing), and the
- *     existing mock-fallback inside gemini.ts on hard quota failures.
+ *     boards-first pipeline (real ATS scans cost zero quota).
  */
 import { waitUntil } from '@vercel/functions';
 import crypto from 'crypto';
 import { db } from './db.js';
 import { discoverJobsWithAgent } from './gemini.js';
-import { filterBoardJobsByKeywords, resolveDiscoveryTargets, scanBoards, scoreBoardJob } from './boards.js';
+import { DEFAULT_BOARD_TARGETS, filterBoardJobsByKeywords, parseBoardTargets, resolveDiscoveryTargets, scanBoards, scoreBoardJob } from './boards.js';
 import { CandidateProfile, DiscoveryJob, DiscoveryJobResult, DiscoveryOptions, JobPosting } from './types.js';
 
 // ─── Tunables (free-tier aware) ──────────────────────────────────────────────
 const USER_COOLDOWN_MS = 45_000; // minimum spacing between agent runs per user
 const RESULT_TTL_MS = 10 * 60_000; // identical-scan cache duration
+/**
+ * Bump when the discovery pipeline changes what it produces (e.g. boards-first
+ * instead of AI-first). Baked into cacheKey + poolKeyOf fingerprints so every
+ * cached/pooled scan from the previous pipeline generation is instantly stale.
+ */
+const DISCOVERY_REV = 2;
 const STALE_JOB_MS = 45_000; // queued/running job untouched for this long = resume candidate
 
 // ─── Instance-local coordination ────────────────────────────────────────────
@@ -212,6 +218,7 @@ function cacheKey(userId: string, profile: CandidateProfile, options: DiscoveryO
     o: { k: options.keywords, s: options.sources, l: options.location, r: options.remoteOnly, m: options.minMatchScore, c: options.companies },
     p: { skills: profile.primarySkills, cats: profile.skills?.map(c => c.items).flat().sort(), yrs: profile.yearsOfExperience, loc: profile.location },
     rev: profile.updatedAt,
+    pipeline: DISCOVERY_REV,
   });
   return crypto.createHash('sha1').update(fingerprint).digest('hex').slice(0, 24);
 }
@@ -224,23 +231,36 @@ async function markStage(userId: string, jobId: string, status: DiscoveryJob['st
 async function executeDiscovery(userId: string, jobId: string, profile: CandidateProfile, options: DiscoveryOptions): Promise<{ result: DiscoveryJobResult; jobIds: string[] }> {
   await markStage(userId, jobId, 'running', 10, 'Scanning portals…');
 
-  // Tier 0 — REAL JOB BOARDS (issue #10): when the run names companies we can
-  // read live (explicit options.companies or a keyword that is a known board),
-  // fetch real postings from Greenhouse/Lever/Ashby. Zero AI quota, real data.
+  // Tier 0 — REAL JOB BOARDS (issue #10): fetch live postings from public ATS
+  // boards. Targets come from explicit options.companies, keywords that name a
+  // known board, or — when the run names nothing — DEFAULT_BOARD_TARGETS, so a
+  // default scan is ALWAYS real data, never AI-synthesized. Zero AI quota.
   // The strict filter chain below applies to board jobs EXACTLY as to AI jobs.
-  // If the boards yield nothing (no targets, 404s, timeouts, or keyword-miss),
-  // we fall through to the agent chain unchanged.
+  // If the boards yield nothing (404s, timeouts, or keyword-miss), we fall
+  // through to the agent chain unchanged.
   let rawDiscovered: Array<Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>> = [];
   let provider = 'mock';
-  const boardTargets = resolveDiscoveryTargets({ companies: options.companies, keywords: options.keywords });
+  let boardTargets = resolveDiscoveryTargets({ companies: options.companies, keywords: options.keywords });
+  let usedDefaultBoards = false;
+  if (!boardTargets.length && !options.companies?.length) {
+    // No explicit companies and no board-name keyword: scan the curated
+    // default boards so the run is grounded in live postings.
+    boardTargets = parseBoardTargets(DEFAULT_BOARD_TARGETS);
+    usedDefaultBoards = true;
+  }
   if (boardTargets.length) {
     await markStage(userId, jobId, 'running', 20, `Checking ${boardTargets.length} live job board(s)…`);
     const scan = await scanBoards(boardTargets);
     const okBoards = scan.reports.filter((b) => b.status === 'ok');
     console.log(`[discovery] boards: ${scan.reports.map((b) => `${b.target}=${b.status}/${b.count}`).join(', ') || 'none'}`);
     const keywordRows = filterBoardJobsByKeywords(scan.jobs, options.keywords);
-    if (keywordRows.length) {
-      rawDiscovered = keywordRows.map((r) => {
+    // A default-market scan filtered down to nothing by keywords would hide
+    // real openings behind an empty result — for default boards, keep the
+    // unfiltered rows (still scored per-profile below). Explicit company
+    // scans keep the strict keyword behavior.
+    const rows = (keywordRows.length || !usedDefaultBoards) ? keywordRows : scan.jobs;
+    if (rows.length) {
+      rawDiscovered = rows.map((r) => {
         const fit = scoreBoardJob(r, profile);
         return {
           company: r.company,
@@ -567,6 +587,7 @@ export function poolKeyOf(profile: CandidateProfile, options: DiscoveryOptions):
     skills: profile.primarySkills,
     cats: profile.skills?.map((c) => c.items).flat().sort(),
     yrs: profile.yearsOfExperience,
+    pipeline: DISCOVERY_REV,
   });
   return crypto.createHash('sha1').update(fp).digest('hex').slice(0, 24);
 }

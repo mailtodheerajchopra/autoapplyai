@@ -423,9 +423,12 @@ function mapDiscoveredItems(
       isStale: daysAgo > 45,
       isConflictOfInterest: isConflict,
       conflictReason: isConflict ? `Matches excluded/current employer (${profile.currentEmployer})` : undefined,
-      sourceUrl: item.sourceUrl || (item.portalType === 'workday'
-        ? `https://${item.company.toLowerCase().replace(/[^a-z0-9]/g, '')}.wd1.myworkdayjobs.com/Careers/job/${encodeURIComponent(item.title.toLowerCase().replace(/\s+/g, '-'))}`
-        : `https://www.linkedin.com/jobs/view/${encodeURIComponent(item.title.toLowerCase().replace(/\s+/g, '-'))}`),
+      // NEVER fabricate a URL: a wrong link is worse than none. AI-suggested
+      // roles without a verifiable source are labeled so the UI can flag them.
+      sourceUrl: typeof item.sourceUrl === 'string' && /^https?:\/\//i.test(item.sourceUrl) ? item.sourceUrl : '',
+      fitRationale: /^https?/i.test(String(item.sourceUrl || ''))
+        ? item.fitRationale
+        : `${item.fitRationale ? item.fitRationale + ' ' : ''}(AI-suggested — verify this opening before applying)`,
       status: 'discovered',
     };
   });
@@ -473,8 +476,8 @@ STRICT CANDIDATE SAFETY FILTERS:
 3. JOB POSTING FRESHNESS:
    Strict requirement: ONLY return jobs posted within the last 45 days (between 1 and 45 days ago). Completely discard any job postings older than 45 days. Set postedDaysAgo to an integer between 1 and 45.${searchOptions.recencyWindowDays ? `\n   INCREMENTAL SWEEP MODE: this is a daily refresh scan. ONLY return jobs posted within the last ${searchOptions.recencyWindowDays} day(s) — postedDaysAgo must be between 1 and ${searchOptions.recencyWindowDays}. Do NOT repeat well-known older postings; surface ONLY fresh announcements from today/yesterday.` : ''}
 
-Generate 6 realistic, highly relevant job openings actively hiring in tech companies (including major enterprises using Workday like Adobe, Salesforce, Cisco, Netflix, Visa, Walmart, Indian enterprises like Infosys, TCS, Zoho, Razorpay, Swiggy, and listings seen on LinkedIn and Naukri — weight the mix toward the candidate's market per the geographic rule above).
-For each job, provide realistic job descriptions, exact required skills, portal type (specify 'workday' for enterprise company career sites, or 'greenhouse' / 'lever' / 'direct'), calculate an objective matchScore (0-100), identify matching skills, missing skills, postedDaysAgo (1-45), and provide a 1-sentence fit rationale.`;
+Suggest up to 6 currently-open, highly relevant job openings you have high confidence actually exist (major enterprises and tech companies; weight the mix toward the candidate's market per the geographic rule above). Do NOT invent openings or details.
+For each job, provide the job description, exact required skills, portal type ('workday' for enterprise career sites, or 'greenhouse' / 'lever' / 'direct'), an objective matchScore (0-100), matching skills, missing skills, postedDaysAgo (1-45), a 1-sentence fit rationale, and sourceUrl ONLY when you are certain of the exact posting URL — otherwise use an empty string (the app will label the role as AI-suggested and unverified).`;
 
   // Tier 1: Groq (llama-3.3-70b) leads discovery — free-tier friendly and
   // far faster per token than Gemini, and it conserves the scarce Gemini
@@ -572,7 +575,10 @@ For each job, provide realistic job descriptions, exact required skills, portal 
   } catch (error) {
     console.error("Gemini job search error:", error);
 
-    return { jobs: getFallbackDiscoveredJobs(profile, searchOptions.recencyWindowDays ?? 45, searchOptions.location), provider: `mock-fallback (Groq + Gemini unavailable)` };
+    // NO mock fallback: returning hardcoded fake jobs disguised as discoveries
+    // is dishonest data. An empty result is truthful — the UI shows zero jobs
+    // and the user can retry, instead of seeing the same dummy openings.
+    return { jobs: [], provider: 'unavailable (model tier failed — no results returned)' };
   }
 }
 
@@ -881,200 +887,6 @@ function extractFallbackResume(text: string): ResumeDocument['parsedProfile'] {
     ],
     certifications: ["Professional Cloud Developer"],
   };
-}
-
-function getFallbackDiscoveredJobs(profile: CandidateProfile, recencyCap = 45, locationHint = ''): Omit<JobPosting, 'id' | 'userId' | 'discoveredAt'>[] {
-  const excluded = Array.from(new Set([profile.currentEmployer, ...(profile.excludedEmployers || [])].filter(Boolean)));
-  
-  const rawJobs = [
-    {
-      title: "Senior Full Stack Engineer",
-      company: "Salesforce",
-      location: "San Francisco, CA / Remote",
-      remoteType: "Remote" as const,
-      employmentType: "Full-time" as const,
-      salaryRange: "$160,000 - $195,000 USD",
-      source: "Workday Portal" as const,
-      sourceUrl: "https://salesforce.wd1.myworkdayjobs.com/Careers/job/Senior-Full-Stack-Engineer",
-      portalType: "workday" as const,
-      workdayTenantId: "salesforce",
-      description: "Join the Core Platform team to architect scalable cloud web applications, real-time collaboration engines, and robust APIs.",
-      requiredSkills: ["TypeScript", "React", "Node.js", "PostgreSQL", "Docker", "AWS"],
-      matchScore: 94,
-      matchingSkills: ["TypeScript", "React", "Node.js", "Docker"],
-      missingSkills: ["PostgreSQL"],
-      postedDaysAgo: 4,
-      fitRationale: "Strong alignment with core React and Node.js requirements, extensive full-stack system architecture experience.",
-      status: "discovered" as const,
-    },
-    {
-      title: "Staff Software Engineer - Cloud Platforms",
-      company: "Adobe",
-      location: "San Jose, CA / Remote",
-      remoteType: "Remote" as const,
-      employmentType: "Full-time" as const,
-      salaryRange: "$180,000 - $220,000 USD",
-      source: "Workday Portal" as const,
-      sourceUrl: "https://adobe.wd5.myworkdayjobs.com/external_experienced/job/Staff-Software-Engineer",
-      portalType: "workday" as const,
-      workdayTenantId: "adobe",
-      description: "Building next-generation distributed asset management and enterprise design systems using modern TypeScript and cloud services.",
-      requiredSkills: ["TypeScript", "React", "Kubernetes", "GraphQL", "CI/CD"],
-      matchScore: 89,
-      matchingSkills: ["TypeScript", "React", "CI/CD"],
-      missingSkills: ["Kubernetes", "GraphQL"],
-      postedDaysAgo: 11,
-      fitRationale: "Matches 80% of frontend & DevOps skills, ideal candidate for high-concurrency microservices team.",
-      status: "discovered" as const,
-    },
-    {
-      title: "Lead Frontend Engineer",
-      company: "Stripe",
-      location: "Seattle, WA / Remote",
-      remoteType: "Hybrid" as const,
-      employmentType: "Full-time" as const,
-      salaryRange: "$175,000 - $210,000 USD",
-      source: "LinkedIn" as const,
-      sourceUrl: "https://www.linkedin.com/jobs/view/lead-frontend-engineer-stripe",
-      portalType: "workday" as const,
-      workdayTenantId: "stripe",
-      description: "Architect delightful checkout experiences, financial dashboard interfaces, and accessible design system components.",
-      requiredSkills: ["React", "TypeScript", "Tailwind CSS", "State Management", "Performance Optimization"],
-      matchScore: 92,
-      matchingSkills: ["React", "TypeScript", "Tailwind CSS"],
-      missingSkills: ["Performance Optimization"],
-      postedDaysAgo: 18,
-      fitRationale: "Deep experience with React component architectures and modern responsive UI engineering.",
-      status: "discovered" as const,
-    },
-    {
-      title: "Senior Software Engineer - Payments Platform",
-      company: "Razorpay",
-      location: "Bengaluru, Karnataka / Remote (India)",
-      remoteType: "Remote" as const,
-      employmentType: "Full-time" as const,
-      salaryRange: "₹35,00,000 - ₹55,00,000 INR",
-      source: "Naukri" as const,
-      sourceUrl: "https://www.naukri.com/job-listings-senior-software-engineer-razorpay-bengaluru",
-      portalType: "direct" as const,
-      description: "Own end-to-end features on the payments and settlement platform: React frontends, Node.js services, and high-throughput ledger APIs serving millions of Indian merchants.",
-      requiredSkills: ["TypeScript", "React", "Node.js", "PostgreSQL", "Redis", "AWS"],
-      matchScore: 93,
-      matchingSkills: ["TypeScript", "React", "Node.js", "PostgreSQL"],
-      missingSkills: ["Redis"],
-      postedDaysAgo: 3,
-      fitRationale: "Strong product-engineering fit for a India-remote fintech role matching the full-stack profile.",
-      status: "discovered" as const,
-    },
-    {
-      title: "Cloud Platform Engineer - Digital Transformation",
-      company: "Infosys",
-      location: "Pune / Hybrid",
-      remoteType: "Hybrid" as const,
-      employmentType: "Full-time" as const,
-      salaryRange: "₹22,00,000 - ₹34,00,000 INR",
-      source: "Naukri" as const,
-      sourceUrl: "https://www.naukri.com/job-listings-cloud-platform-engineer-infosys-pune",
-      portalType: "workday" as const,
-      workdayTenantId: "infosys",
-      description: "Build and operate cloud-native microservices on Kubernetes for global enterprise clients, with infra-as-code on AWS and observability pipelines.",
-      requiredSkills: ["Node.js", "AWS", "Kubernetes", "Docker", "Terraform"],
-      matchScore: 88,
-      matchingSkills: ["Node.js", "AWS", "Docker"],
-      missingSkills: ["Kubernetes", "Terraform"],
-      postedDaysAgo: 6,
-      fitRationale: "Enterprise cloud role in India matching DevOps and backend fundamentals.",
-      status: "discovered" as const,
-    },
-    {
-      title: "Full Stack Developer",
-      company: "Infosys Digital",
-      location: "Bangalore / Hybrid",
-      remoteType: "Hybrid" as const,
-      employmentType: "Full-time" as const,
-      salaryRange: "₹24,00,000 - ₹32,00,000 INR",
-      source: "Naukri" as const,
-      sourceUrl: "https://www.naukri.com/job-listings-full-stack-developer-infosys",
-      portalType: "direct" as const,
-      description: "Enterprise digital transformation initiatives, building high-throughput services and responsive portals for global banking clients.",
-      requiredSkills: ["Node.js", "React", "SQL", "REST APIs", "Microservices"],
-      matchScore: 91,
-      matchingSkills: ["Node.js", "React", "SQL", "REST APIs"],
-      missingSkills: ["Microservices"],
-      postedDaysAgo: 24,
-      fitRationale: "Direct match on all foundational backend and API technologies.",
-      status: "discovered" as const,
-    },
-    {
-      title: "Senior Software Engineer — Marketplace Platform",
-      company: "noon",
-      location: "Dubai, UAE / Hybrid",
-      remoteType: "Hybrid" as const,
-      employmentType: "Full-time" as const,
-      salaryRange: "AED 25,000 - 38,000 / month",
-      source: "LinkedIn" as const,
-      sourceUrl: "https://www.linkedin.com/jobs/view/senior-software-engineer-noon-dubai",
-      portalType: "direct" as const,
-      description: "Own full-stack features across the marketplace and last-mile logistics platforms serving GCC markets; React frontends on Node.js services, deployed on AWS me-central-1.",
-      requiredSkills: ["React", "Node.js", "TypeScript", "PostgreSQL", "AWS"],
-      matchScore: 90,
-      matchingSkills: ["React", "Node.js", "TypeScript", "PostgreSQL"],
-      missingSkills: ["AWS"],
-      postedDaysAgo: 9,
-      fitRationale: "Gulf-market full-stack role matching core React/Node skills with regional cloud exposure.",
-      status: "discovered" as const,
-    },
-    {
-      title: "Cloud Engineer — Digital Banking",
-      company: "Emirates NBD",
-      location: "Dubai, UAE",
-      remoteType: "On-site" as const,
-      employmentType: "Full-time" as const,
-      salaryRange: "AED 28,000 - 40,000 / month",
-      source: "LinkedIn" as const,
-      sourceUrl: "https://www.linkedin.com/jobs/view/cloud-engineer-emirates-nbd-dubai",
-      portalType: "workday" as const,
-      workdayTenantId: "emiratesnbd",
-      description: "Build and operate cloud-native banking services (Kubernetes, Terraform, CI/CD) for UAE retail and corporate digital channels in a regulated environment.",
-      requiredSkills: ["AWS", "Kubernetes", "Docker", "Terraform", "Node.js"],
-      matchScore: 87,
-      matchingSkills: ["Docker", "Node.js"],
-      missingSkills: ["Kubernetes", "Terraform"],
-      postedDaysAgo: 14,
-      fitRationale: "UAE banking cloud role matching DevOps foundations; Workday-managed enterprise.",
-      status: "discovered" as const,
-    },
-  ];
-
-  // The mock tier obeys the same geo rules as the AI tiers: an India-market
-  // candidate gets the India slice only — US canned entries would (correctly)
-  // be dropped by the serve-time filter anyway, so don't offer them. The
-  // kickoff's location counts too: an explicit "India" search must stay
-  // India-shaped even when the parsed profile has no location yet. Same for
-  // the Gulf corridor ("Dubai" searches must not surface Bangalore roles).
-  const marketSignal = (profile.location || '') + ' ' + (locationHint || '');
-  const isIndiaMarket = /india|bengaluru|bangalore|mumbai|delhi|hyderabad|pune|chennai|noida|gurgaon|kolkata/i.test(marketSignal);
-  const isGulfMarket = /(?:\bu\.a\.e\b|\buae\b|united arab emirates|\bdubai\b|\babu dhabi\b|\bsharjah\b|\briyadh\b|\bsaudi\b|\bksa\b|\bdoha\b|\bqatar\b|\bkuwait\b|\bbahrain\b|\boman\b|\bmuscat\b|\bgulf\b)/i.test(marketSignal);
-  const marketJobs = isGulfMarket
-    ? rawJobs.filter((j) => /(?:dubai|uae|abu dhabi|riyadh|doha|saudi|middle east|gcc)/i.test(j.location) || j.remoteType === 'Remote')
-    : isIndiaMarket
-    ? rawJobs.filter((j) => /india|bengaluru|bangalore|pune/i.test(j.location))
-    : rawJobs;
-
-  return marketJobs.map(j => {
-    const isConflict = excluded.some(ex => ex && j.company.toLowerCase().includes(ex.toLowerCase()));
-    // Respect the incremental-sweep window in fallback mode too, so degraded
-    // sweeps can never pollute the pool history with back-dated postings.
-    const daysAgo = Math.min(j.postedDaysAgo, recencyCap);
-    return {
-      ...j,
-      postedDaysAgo: daysAgo,
-      postedDate: new Date(Date.now() - daysAgo * 86400000).toISOString(),
-      isStale: daysAgo > 45,
-      isConflictOfInterest: isConflict,
-      conflictReason: isConflict ? `Matches excluded/current employer (${profile.currentEmployer})` : undefined,
-    };
-  });
 }
 
 function getFallbackAutofill(profile: CandidateProfile, job: JobPosting) {
