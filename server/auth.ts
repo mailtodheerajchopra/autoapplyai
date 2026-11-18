@@ -106,9 +106,9 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   if (!user) {
     // Valid token, but this instance's snapshot may predate the user's
     // registration on another serverless instance. Re-read the durable
-    // store once (no-op when fresh) before rejecting, so a warm-but-stale
-    // instance cannot random-401 a legitimately signed-in user.
-    await db.refreshIfStale();
+    // store once before rejecting, so a warm-but-stale instance cannot
+    // random-401 a legitimately signed-in user.
+    await db.refreshIfStale({ force: true });
     user = db.findUserById(claims.u);
   }
   if (!user) {

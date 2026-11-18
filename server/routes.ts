@@ -28,6 +28,18 @@ import {
 
 export const apiRouter = Router();
 
+// Read-path freshness: serverless instances hydrate the durable snapshot at
+// cold start and share no memory, so a warm-but-stale instance would serve
+// users/resumes/jobs that no longer (or don't yet) exist in its snapshot —
+// the exact mechanism behind "Unknown session user" 401s and empty lists
+// right after registration or upload. refreshIfStale() is internally
+// throttled (one durable round-trip per window per instance), so this costs
+// ~one getVersion() every few seconds, not one per request.
+apiRouter.use(async (_req: Request, _res: Response, next: () => void) => {
+  await db.refreshIfStale();
+  next();
+});
+
 // ==========================================
 // Cron: shared DiscoveryPool sweeper (Vercel Cron)
 // ==========================================

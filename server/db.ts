@@ -52,12 +52,17 @@ function unionById<T extends { id: string }>(durable: T[], local: T[]): T[] {
   return [...byId.values()];
 }
 
+/** Minimum gap between durable-version probes issued by refreshIfStale(). */
+const FRESH_CHECK_THROTTLE_MS = 300;
+
 class DatabaseService {
   private data: DatabaseSchema;
   private saveTimeout: NodeJS.Timeout | null = null;
   private store: StateStore;
   /** Version marker of the durable snapshot this instance last observed. */
   private storeVersion: string | null = null;
+  /** Timestamp of the last durable-version probe (refreshIfStale throttle). */
+  private lastFreshCheckAt = 0;
   /**
    * False when hydration could not verify the durable store — persistence is
    * then refused so seed-era memory can never be flushed over the real row.
@@ -252,9 +257,18 @@ class DatabaseService {
    * one getVersion() round-trip, full load+merge only when the store moved.
    * Never throws — on a store outage the caller falls through to the 401 and
    * the client keeps the token (see fetchWithAuth).
+   *
+   * Throttled: calls within FRESH_CHECK_THROTTLE_MS of the last durable
+   * version probe are skipped (the api router-wide freshness middleware
+   * invokes this on every request — the throttle keeps that at one
+   * getVersion() per window per instance, not one per request). Pass
+   * { force: true } to bypass the throttle (auth miss path does).
    */
-  async refreshIfStale(): Promise<boolean> {
+  async refreshIfStale(options: { force?: boolean } = {}): Promise<boolean> {
     if (!this.storeVerified) return false;
+    const now = Date.now();
+    if (!options.force && now - this.lastFreshCheckAt < FRESH_CHECK_THROTTLE_MS) return false;
+    this.lastFreshCheckAt = now;
     try {
       const durableVersion = await this.store.getVersion();
       if (!durableVersion || sameStoreVersion(durableVersion, this.storeVersion)) return false;
