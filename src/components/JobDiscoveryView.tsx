@@ -43,7 +43,12 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
   const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [portalFilter, setPortalFilter] = useState<string>('all');
   const [locationFilter, setLocationFilter] = useState<string>('all');
-  const [minMatch, setMinMatch] = useState<number>(80);
+  // Board-fit scores start at a 35 floor (posting exists on a live board) and
+  // grow ~11 points per matching skill, so the old default of 80 filtered out
+  // nearly every real posting — the reported "agent came back with 0
+  // findings". 40 keeps zero-skill-hit noise out without hiding the market;
+  // users can raise it via the selector.
+  const [minMatch, setMinMatch] = useState<number>(40);
 
   // Agent configuration modal / trigger state
   const [isAgentRunning, setIsAgentRunning] = useState<boolean>(false);
@@ -192,8 +197,12 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
       // serving instance hasn't observed the job yet (cross-lambda hydration
       // lag) — tolerate a short retry window before treating it as fatal.
       const pollIntervalMs = 800;
-      const maxWaitMs = 60_000;
+      // Board scans hit 9 live ATS hosts; under throttling a full sweep can
+      // take 1-3 minutes, so give it real room instead of silently giving up
+      // (an abandoned run looked exactly like "0 results" to the user).
+      const maxWaitMs = 180_000;
       let notFoundStreak = 0;
+      let lastStatus: string = kickoff.status;
       const startedAt = Date.now();
       while (Date.now() - startedAt < maxWaitMs) {
         let job: Awaited<ReturnType<typeof api.getDiscoveryJob>> | null = null;
@@ -207,6 +216,7 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
           continue;
         }
         setAgentProgress(job.progress);
+        lastStatus = job.status;
         if (job.status === 'completed' || job.status === 'failed') {
           if (job.status === 'failed') {
             alert('Agent discovery failed: ' + (job.error || 'unknown error'));
@@ -214,6 +224,9 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      }
+      if (lastStatus !== 'completed' && lastStatus !== 'failed') {
+        alert('The scan is still running in the background (live boards can be slow). Its jobs will appear here automatically when it finishes — give it a minute, then reopen this view.');
       }
       await onRefreshJobs();
     } catch (err) {
@@ -619,9 +632,10 @@ export const JobDiscoveryView: React.FC<JobDiscoveryViewProps> = ({
               onChange={(e) => setMinMatch(Number(e.target.value))}
               className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-slate-200 focus:outline-none"
             >
+              <option value={40}>40%+ (show more)</option>
+              <option value={55}>55%+</option>
               <option value={70}>70%+</option>
               <option value={80}>80%+</option>
-              <option value={85}>85%+</option>
               <option value={90}>90%+</option>
             </select>
           </div>

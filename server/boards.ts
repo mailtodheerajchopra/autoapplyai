@@ -508,7 +508,13 @@ export async function scanBoards(
     return count;
   };
 
-  for (const target of targets) {
+  // Scan all targets in parallel: each target makes one list request (+ capped
+  // SmartRecruiters detail enrichment, already parallel internally). Under ATS
+  // throttling a sequential sweep of 9 boards can take 8s-per-timeout × 9 ≈
+  // 90s+, which outran the UI's patience; in parallel the sweep costs about
+  // one slow request, not the sum of nine. The shared `jobs` map is safe:
+  // collect() runs synchronous mutations on the single-threaded event loop.
+  await Promise.all(targets.map(async (target) => {
     const attempts: BoardAts[] = target.ats === 'probe' ? PROBE_ORDER : [target.ats as BoardAts];
     let settled = false;
     for (const ats of attempts) {
@@ -555,7 +561,7 @@ export async function scanBoards(
     if (!settled) {
       reports.push({ target: target.label, ats: target.ats === 'probe' ? null : (target.ats as BoardAts), status: 'not_found', count: 0, note: 'no public board found' });
     }
-  }
+  }));
 
   // Cross-company dedupe: same company+title on two boards = one posting.
   const seen = new Set<string>();
