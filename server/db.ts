@@ -244,6 +244,34 @@ class DatabaseService {
   }
 
   /**
+   * Read-path staleness check (auth critical): a warm serverless instance
+   * hydrated its snapshot BEFORE another instance registered a user, so its
+   * memory cannot know that user and would answer every valid-token request
+   * with 401 "Unknown session user" until it happens to recycle. The auth
+   * middleware calls this before rejecting an unknown user. Cheap when fresh:
+   * one getVersion() round-trip, full load+merge only when the store moved.
+   * Never throws — on a store outage the caller falls through to the 401 and
+   * the client keeps the token (see fetchWithAuth).
+   */
+  async refreshIfStale(): Promise<boolean> {
+    if (!this.storeVerified) return false;
+    try {
+      const durableVersion = await this.store.getVersion();
+      if (!durableVersion || sameStoreVersion(durableVersion, this.storeVersion)) return false;
+      const durable = (await this.store.load()) as DatabaseSchema | null;
+      if (durable && typeof durable === 'object' && Array.isArray(durable.users)) {
+        console.warn(`[db] Store advanced under this instance (was ${this.storeVersion ?? 'unknown'}, now ${durableVersion}) — merging durable snapshot before auth read`);
+        this.mergeDurableIntoLocal(this.normalizeSnapshot(durable));
+      }
+      this.storeVersion = durableVersion;
+      return true;
+    } catch (e) {
+      console.error('[db] refreshIfStale failed:', e instanceof Error ? e.message : e);
+      return false;
+    }
+  }
+
+  /**
    * Union-merge a freshly-loaded durable snapshot into local memory after a
    * version conflict: durable wins for shared ids, local-only entries survive
    * (they exist only in this instance's memory and would otherwise be lost),

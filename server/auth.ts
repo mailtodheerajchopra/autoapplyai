@@ -77,7 +77,7 @@ export function revokeToken(_token: string): void {
   // Intentional no-op under the stateless scheme. Kept for call-site compatibility.
 }
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+export async function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
   // Support Administrative Master Key bypass (for scripts, curl, health checks)
   const adminKeyHeader = req.headers['x-admin-key'];
   if (adminKeyHeader && typeof adminKeyHeader === 'string' && adminKeyHeader.trim() === getAdminApiKey()) {
@@ -102,7 +102,15 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
     return;
   }
 
-  const user = db.findUserById(claims.u);
+  let user = db.findUserById(claims.u);
+  if (!user) {
+    // Valid token, but this instance's snapshot may predate the user's
+    // registration on another serverless instance. Re-read the durable
+    // store once (no-op when fresh) before rejecting, so a warm-but-stale
+    // instance cannot random-401 a legitimately signed-in user.
+    await db.refreshIfStale();
+    user = db.findUserById(claims.u);
+  }
   if (!user) {
     res.status(401).json({ error: 'Unauthorized: Unknown session user' });
     return;

@@ -151,3 +151,46 @@ describe('OAuth provider plumbing', () => {
     }
   });
 });
+
+describe('cross-instance auth self-heal (stale warm instance)', () => {
+  const app = createApp();
+
+  it('accepts a token for a user that only exists in a NEWER durable snapshot (registered by another instance)', async () => {
+    // Simulate a second serverless instance registering a user: write the
+    // durable file directly so THIS instance's in-memory snapshot (hydrated
+    // at boot) does not contain the user. Before the refreshIfStale fix this
+    // request 401'd "Unknown session user" forever on a warm instance.
+    const fs = await import('fs');
+    const path = await import('path');
+    const filePath = path.join(process.env.DATA_DIR!, 'database.json');
+
+    // Ensure our external write lands on a strictly later mtime than the
+    // version this instance observed at hydration (coarse FS timestamps).
+    await new Promise((r) => setTimeout(r, 120));
+
+    const snapshot = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const template = snapshot.users[0];
+    snapshot.users.push({
+      ...template,
+      id: 'usr_other_instance',
+      email: 'other-instance@test.dev',
+      name: 'Other Instance User',
+    });
+    fs.writeFileSync(filePath, JSON.stringify(snapshot, null, 2), 'utf-8');
+
+    const token = generateToken('usr_other_instance');
+    const res = await request(app)
+      .get('/api/profile')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+  });
+
+  it('still rejects a valid-signature token for a user that exists nowhere (durable + memory)', async () => {
+    const token = generateToken('usr_never_existed_anywhere');
+    const res = await request(app)
+      .get('/api/profile')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Unauthorized: Unknown session user');
+  });
+});

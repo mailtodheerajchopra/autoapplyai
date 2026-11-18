@@ -69,18 +69,25 @@ async function fetchWithAuth<T>(url: string, options: RequestInit = {}): Promise
 
   const response = await fetch(url, { ...options, headers });
 
-  if (response.status === 401) {
-    // If unauthorized, token is bad or expired
-    setStoredToken(null);
-  }
-
   if (!response.ok) {
+    const raw = await response.text();
     let errorMsg = `HTTP Error ${response.status}`;
     try {
-      const errJson = await response.json();
-      errorMsg = errJson.error || errorMsg;
+      errorMsg = (JSON.parse(raw) as { error?: string }).error || errorMsg;
     } catch {
       // ignore JSON parse error
+    }
+    if (response.status === 401 && errorMsg.includes('Unknown session user')) {
+      // NOT a bad token: a warm serverless instance whose snapshot predates
+      // the user's registration (it self-heals by re-reading the durable
+      // store). Keep the token so one unlucky request doesn't force logout —
+      // the user can simply retry.
+      throw new Error(errorMsg);
+    }
+    if (response.status === 401) {
+      // Token-level failure (bad/expired signature) — the stored token is
+      // unusable, drop it.
+      setStoredToken(null);
     }
     throw new Error(errorMsg);
   }
