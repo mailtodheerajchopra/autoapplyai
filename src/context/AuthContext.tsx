@@ -12,7 +12,7 @@ interface AuthContextType {
   availableUsers: { id: string; email: string; name: string; role: 'candidate' | 'admin' }[];
   demoPersonas: { id: string; email: string; name: string; role: 'candidate' | 'admin' }[];
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  register: (name: string, email: string, password: string, roleIntent?: string) => Promise<void>;
   logout: () => void;
   switchUser: (userId: string) => Promise<void>;
   toggleUserRole: (newRole: 'candidate' | 'admin') => Promise<void>;
@@ -91,11 +91,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const register = async (name: string, email: string, password: string) => {
+  const register = async (name: string, email: string, password: string, roleIntent?: string) => {
     setIsLoading(true);
     try {
       localStorage.removeItem('autoapply_explicit_logout');
-      const res = await api.register(name, email, password);
+      const res = await api.register(name, email, password, roleIntent);
       track('register');
       setUser(res.user);
       setProfile(res.profile);

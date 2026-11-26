@@ -2,33 +2,18 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, OpenCode-Branch]
   pull_request:
-    branches: [main]
 
 jobs:
-  build-and-test:
-    name: build
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          # Node 24 ships npm 11, which tolerates missing optional-peer entries
-          # (@emnapi/* via @napi-rs/wasm-runtime) that npm 10 rejects during `npm ci`.
-          # Keep in sync with the maintainers' dev Node version.
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Tests
-        run: npm run test
-
-      - name: Build
-        run: npm run build
+          node-version: 20
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

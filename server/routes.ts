@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import mammoth from 'mammoth';
 import { db } from './db.js';
-import { authMiddleware, generateToken } from './auth.js';
+import { authMiddleware, generateToken, isEmployee, isVerifiedEmployee, isRecruiter, isVerifier } from './auth.js';
 import {
   parseResumeWithGemini,
   extractTextFromPdfOrBinary,
@@ -14,6 +14,7 @@ import {
   asHttpError, pollDiscovery, startDiscovery, sweepDiscoveryPool,
 } from './discovery.js';
 import { analyzeJobDescription } from './jd.js';
+import { isEmail, requireFields } from './validation.js';
 import { JobPosting, WorkdayApplication, ResumeDocument, WorkdayCredentialAccount } from './types.js';
 import {
   getAuthSecret,
@@ -72,11 +73,10 @@ apiRouter.post('/cron/discovery-sweep', async (req: Request, res: Response) => {
 apiRouter.post('/auth/register', async (req: Request, res: Response) => {
   // Security: self-registration always creates candidates. Admin grants
   // happen out-of-band, never via the register payload.
-  const { email, name, password } = req.body as { email: string; name: string; password: string };
-  if (!email || !name || !password) {
-    res.status(400).json({ error: 'Name, email, and password are required' });
-    return;
-  }
+  const { email, name, password, roleIntent } = req.body as { email: string; name: string; password: string; roleIntent?: string };
+  const missing = requireFields(req.body, ['email', 'name', 'password']);
+  if (missing) { res.status(400).json({ error: missing }); return; }
+  if (!isEmail(email)) { res.status(400).json({ error: 'Invalid email' }); return; }
 
   const existing = db.findUserByEmail(email);
   if (existing) {
@@ -84,7 +84,15 @@ apiRouter.post('/auth/register', async (req: Request, res: Response) => {
     return;
   }
 
-  const user = db.createUser(email, name, password, 'candidate');
+  const intent = (roleIntent === 'employee' || roleIntent === 'recruiter') ? roleIntent : 'candidate';
+  const assignedRole = intent === 'employee' ? 'employee' : intent === 'recruiter' ? 'recruiter' : 'candidate';
+  const user = db.createUser(email, name, password, assignedRole as any);
+  if (intent === 'employee') {
+    db.upsertEmployeeProfile(user.id, { corporateEmail: email.trim().toLowerCase() });
+  }
+  if (intent === 'recruiter') {
+    db.updateUserCapabilities(user.id, [...(db.findUserById(user.id)?.capabilities || []), 'can_recruit']);
+  }
   const token = generateToken(user.id);
   const profile = db.getProfile(user.id);
 
@@ -483,8 +491,10 @@ apiRouter.get('/auth/me', authMiddleware, (req: Request, res: Response) => {
   const user = req.user!;
   const profile = db.getProfile(user.id);
   res.json({
-    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, capabilities: user.capabilities || [] },
     profile,
+    employeeProfile: db.getEmployeeProfile(user.id) || null,
+    candidateReferralProfile: db.getCandidateReferralProfile(user.id) || null,
   });
 });
 
@@ -638,6 +648,662 @@ apiRouter.put('/profile', authMiddleware, (req: Request, res: Response) => {
     severity: 'info',
   });
   res.json(updated);
+});
+
+// ==========================================
+// Referral Marketplace – Candidate & Employee Profiles (Milestone 1)
+// ==========================================
+
+// Candidate referral profile
+apiRouter.get('/referral/candidate-profile', authMiddleware, (req: Request, res: Response) => {
+  res.json(db.getCandidateReferralProfile(req.user!.id) || null);
+});
+
+apiRouter.put('/referral/candidate-profile', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const allowed = [
+    'currentEmployer', 'previousEmployers', 'preferredCompanies', 'preferredTitles',
+    'preferredLocations', 'noticePeriodDays', 'availabilityDate', 'skills',
+    'experienceYears', 'educationSummary', 'employmentHistory', 'visibility',
+    'referralOptIn', 'submittedForReferral', 'profileCompleteness',
+  ];
+  const updates: Record<string, any> = {};
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) updates[key] = (req.body as any)[key];
+  }
+  if (updates.visibility && !['private', 'anonymous', 'verified_employees', 'recruiters'].includes(updates.visibility)) {
+    res.status(400).json({ error: 'Invalid visibility value' });
+    return;
+  }
+  const updated = db.upsertCandidateReferralProfile(userId, updates);
+  db.addAuditLog({
+    userId,
+    timestamp: new Date().toISOString(),
+    category: 'profile',
+    action: 'CANDIDATE_REFERRAL_PROFILE_UPDATED',
+    details: `Updated candidate referral profile (visibility=${updated.visibility}, optIn=${updated.referralOptIn}).`,
+    severity: 'info',
+  });
+  res.json(updated);
+});
+
+apiRouter.post('/referral/candidate-profile/submit', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const profile = db.upsertCandidateReferralProfile(userId, { submittedForReferral: true, referralOptIn: true });
+  db.addAuditLog({
+    userId,
+    timestamp: new Date().toISOString(),
+    category: 'referral',
+    action: 'CANDIDATE_SUBMITTED_FOR_REFERRAL',
+    details: 'Candidate submitted profile for referral consideration.',
+    severity: 'success',
+  });
+  res.json(profile);
+});
+
+// Employee / referrer profile
+apiRouter.get('/employee/me', authMiddleware, (req: Request, res: Response) => {
+  res.json(db.getEmployeeProfile(req.user!.id) || null);
+});
+
+apiRouter.put('/employee/me', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const existing = db.getEmployeeProfile(userId);
+  const allowed = [
+    'corporateEmail', 'company', 'title', 'department', 'headline', 'summary', 'linkedinUrl',
+  ];
+  const updates: Record<string, any> = {};
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, key)) updates[key] = (req.body as any)[key];
+  }
+  const updated = db.upsertEmployeeProfile(userId, updates);
+  db.updateUserCapabilities(userId, [...(db.findUserById(userId)?.capabilities || []), 'can_refer']);
+  if (!existing) {
+    db.addAuditLog({
+      userId,
+      timestamp: new Date().toISOString(),
+      category: 'security',
+      action: 'EMPLOYEE_PROFILE_CREATED',
+      details: `Employee profile created for company ${updated.company || '(unset)'}.`,
+      severity: 'info',
+    });
+  }
+  res.json(updated);
+});
+
+// Corporate email ownership verification (OTP)
+apiRouter.post('/employee/verify-corporate-email', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const profile = db.getEmployeeProfile(userId);
+  if (!profile || !profile.corporateEmail) {
+    res.status(400).json({ error: 'Set a corporate email first' });
+    return;
+  }
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  void db.setSystemSecret(`emp_otp_${userId}`, JSON.stringify({ code, expiresAt, email: profile.corporateEmail }));
+  db.addAuditLog({
+    userId,
+    timestamp: new Date().toISOString(),
+    category: 'security',
+    action: 'CORPORATE_EMAIL_OTP_SENT',
+    details: `Corporate email OTP dispatched to ${profile.corporateEmail}.`,
+    severity: 'info',
+  });
+  const expose = process.env.NODE_ENV !== 'production';
+  res.json({ sent: true, expiresAt, ...(expose ? { verificationCode: code } : {}) });
+});
+
+apiRouter.post('/employee/verify-corporate-email/confirm', authMiddleware, async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const { code } = req.body as { code?: string };
+  if (!code) {
+    res.status(400).json({ error: 'Code is required' });
+    return;
+  }
+  const raw = db.getSystemSecret(`emp_otp_${userId}`);
+  if (!raw) {
+    res.status(400).json({ error: 'No OTP pending' });
+    return;
+  }
+  let pending: { code: string; expiresAt: string; email: string };
+  try { pending = JSON.parse(raw); } catch { res.status(400).json({ error: 'Invalid OTP state' }); return; }
+  if (new Date(pending.expiresAt).getTime() < Date.now()) {
+    res.status(400).json({ error: 'OTP expired' });
+    return;
+  }
+  if (pending.code !== String(code).trim()) {
+    res.status(400).json({ error: 'Invalid OTP' });
+    return;
+  }
+  db.upsertEmployeeProfile(userId, {
+    emailVerified: true,
+    emailVerifiedAt: new Date().toISOString(),
+    affiliationStatus: 'pending',
+  });
+  await db.setSystemSecret(`emp_otp_${userId}`, '');
+  db.addAuditLog({
+    userId,
+    timestamp: new Date().toISOString(),
+    category: 'security',
+    action: 'CORPORATE_EMAIL_VERIFIED',
+    details: `Corporate email verified for ${pending.email}. Affiliation remains pending review.`,
+    severity: 'success',
+  });
+  res.json({ verified: true, affiliationStatus: 'pending' });
+});
+
+// Affiliation verification (admin/verifier only). Selecting a company never verifies.
+apiRouter.post('/employee/:userId/verify-affiliation', authMiddleware, (req: Request, res: Response) => {
+  const actor = req.user!;
+  if (actor.role !== 'admin' && actor.role !== 'verifier' && !isVerifier(actor)) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  const targetId = req.params.userId;
+  const profile = db.getEmployeeProfile(targetId);
+  if (!profile) {
+    res.status(404).json({ error: 'Employee profile not found' });
+    return;
+  }
+  if (!profile.emailVerified) {
+    res.status(400).json({ error: 'Corporate email not verified' });
+    return;
+  }
+  db.upsertEmployeeProfile(targetId, { affiliationStatus: 'verified' });
+  db.updateUserCapabilities(targetId, [...(db.findUserById(targetId)?.capabilities || []), 'can_refer']);
+  db.updateUserRole(targetId, 'employee');
+  db.addAuditLog({
+    userId: actor.id,
+    timestamp: new Date().toISOString(),
+    category: 'security',
+    action: 'EMPLOYEE_AFFILIATION_VERIFIED',
+    details: `Employee affiliation verified for user ${targetId} by ${actor.id}.`,
+    severity: 'success',
+  });
+  res.json({ success: true, affiliationStatus: 'verified' });
+});
+
+apiRouter.post('/employee/:userId/reject-affiliation', authMiddleware, (req: Request, res: Response) => {
+  const actor = req.user!;
+  if (actor.role !== 'admin' && actor.role !== 'verifier' && !isVerifier(actor)) {
+    res.status(403).json({ error: 'Forbidden' });
+    return;
+  }
+  const targetId = req.params.userId;
+  const profile = db.getEmployeeProfile(targetId);
+  if (!profile) {
+    res.status(404).json({ error: 'Employee profile not found' });
+    return;
+  }
+  db.upsertEmployeeProfile(targetId, { affiliationStatus: 'rejected' });
+  db.addAuditLog({
+    userId: actor.id,
+    timestamp: new Date().toISOString(),
+    category: 'security',
+    action: 'EMPLOYEE_AFFILIATION_REJECTED',
+    details: `Employee affiliation rejected for user ${targetId} by ${actor.id}.`,
+    severity: 'warn',
+  });
+  res.json({ success: true, affiliationStatus: 'rejected' });
+});
+
+// ==========================================
+// Referral Marketplace (Milestone 2)
+// ==========================================
+
+// --- Referral jobs ---
+apiRouter.post('/referral/jobs', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  if (!isVerifiedEmployee(req.user)) {
+    res.status(403).json({ error: 'Verified employee affiliation required to post referral jobs' });
+    return;
+  }
+  const job = db.createReferralJob(userId, req.body || {});
+  db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'referral', action: 'REFERRAL_JOB_CREATED', details: `Created referral job ${job.id} (${job.title} @ ${job.company}).`, severity: 'info' });
+  res.status(201).json(job);
+});
+
+apiRouter.get('/referral/jobs/mine', authMiddleware, (req: Request, res: Response) => {
+  res.json(db.getReferralJobs({ mine: req.user!.id }));
+});
+
+apiRouter.get('/referral/jobs', authMiddleware, (req: Request, res: Response) => {
+  const { company, status } = req.query as { company?: string; status?: string };
+  const limit = Math.min(Number((req.query as any).limit) || 1000, 1000);
+  const offset = Math.max(Number((req.query as any).offset) || 0, 0);
+  const jobs = db.getReferralJobs({ company, status }).slice(offset, offset + limit);
+  res.json(jobs);
+});
+
+apiRouter.get('/referral/jobs/:id', authMiddleware, (req: Request, res: Response) => {
+  const job = db.getReferralJobById(req.params.id);
+  if (!job) { res.status(404).json({ error: 'Not found' }); return; }
+  res.json(job);
+});
+
+apiRouter.put('/referral/jobs/:id', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const job = db.getReferralJobById(req.params.id);
+  if (!job) { res.status(404).json({ error: 'Not found' }); return; }
+  if (job.postedByUserId !== userId && req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const updated = db.updateReferralJob(userId, req.params.id, req.body || {});
+  if (!updated) { res.status(404).json({ error: 'Not found' }); return; }
+  res.json(updated);
+});
+
+apiRouter.post('/referral/jobs/:id/publish', authMiddleware, async (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const job = db.getReferralJobById(req.params.id);
+  if (!job) { res.status(404).json({ error: 'Not found' }); return; }
+  if (job.postedByUserId !== userId && req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (!isVerifiedEmployee(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Verified employee affiliation required' }); return; }
+  // Best-effort AI extraction of required skills / experience from the description
+  if ((!job.skillsRequired || job.skillsRequired.length === 0) && job.description && job.description.trim().length >= 30) {
+    try {
+      const { analysis } = await analyzeJobDescription({ jobDescription: job.description, title: job.title, company: job.company, location: job.location }, null as any);
+      const required = Array.from(new Set([...(analysis.matchedSkills || []), ...(analysis.missingSkills || [])]));
+      if (required.length) db.updateReferralJob(userId, job.id, { skillsRequired: required });
+      if (analysis.minYearsExperience != null) db.updateReferralJob(userId, job.id, { minExperience: analysis.minYearsExperience });
+    } catch {
+      // ignore
+    }
+  }
+  const updated = db.publishReferralJob(userId, req.params.id);
+  db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'referral', action: 'REFERRAL_JOB_PUBLISHED', details: `Published referral job ${req.params.id}.`, severity: 'success' });
+  // notify matching candidates (best-effort, in-app)
+  const candidates = db.searchCandidateProfiles({ id: userId, role: req.user!.role, capabilities: req.user!.capabilities || [] }, { jobId: req.params.id });
+  for (const c of candidates) {
+    if (c.userId && c.matchScore && c.matchScore >= 50) {
+      db.createNotification(c.userId, 'referral_job_published', 'New referral opportunity', `${job.title} at ${job.company} matches your profile (${c.matchScore}%).`, `/referral-jobs/${job.id}`);
+    }
+  }
+  res.json(updated);
+});
+
+apiRouter.post('/referral/jobs/:id/close', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const job = db.getReferralJobById(req.params.id);
+  if (!job) { res.status(404).json({ error: 'Not found' }); return; }
+  if (job.postedByUserId !== userId && req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const updated = db.closeReferralJob(userId, req.params.id);
+  res.json(updated);
+});
+
+apiRouter.post('/referral/jobs/:id/report', authMiddleware, (req: Request, res: Response) => {
+  const job = db.reportReferralJob(req.params.id, req.user!.id, String((req.body || {}).reason || 'reported'));
+  if (!job) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'moderation', action: 'REFERRAL_JOB_REPORTED', details: `Reported referral job ${req.params.id}.`, severity: 'warn' });
+  res.json(job);
+});
+
+apiRouter.post('/admin/referral/jobs/:id/moderate', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const status = (req.body || {}).status === 'removed' ? 'removed' : 'clean';
+  const job = db.moderateReferralJob(req.params.id, status);
+  if (!job) { res.status(404).json({ error: 'Not found' }); return; }
+  res.json(job);
+});
+
+// --- Referral requests ---
+apiRouter.post('/referral/requests', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const { referralJobId, resumeId, coverNote } = req.body || {};
+  if (!referralJobId) { res.status(400).json({ error: 'referralJobId is required' }); return; }
+  const result = db.createReferralRequest(userId, referralJobId, { resumeId, coverNote });
+  if (!result.ok) { res.status(400).json({ error: result.error }); return; }
+  // notify employee
+  const job = db.getReferralJobById(referralJobId);
+  db.createNotification(job!.postedByUserId, 'referral_request_received', 'New referral request', `A candidate requested referral for ${job!.title} at ${job!.company}.`, `/referral-requests`);
+  db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'referral', action: 'REFERRAL_REQUEST_CREATED', details: `Requested referral for job ${referralJobId}.`, severity: 'success' });
+  res.status(201).json(result.request);
+});
+
+apiRouter.get('/referral/requests/mine', authMiddleware, (req: Request, res: Response) => {
+  const limit = Math.min(Number((req.query as any).limit) || 1000, 1000);
+  const offset = Math.max(Number((req.query as any).offset) || 0, 0);
+  res.json(db.getReferralRequestsByCandidate(req.user!.id).slice(offset, offset + limit));
+});
+
+apiRouter.get('/referral/requests/for-employee', authMiddleware, (req: Request, res: Response) => {
+  if (!isEmployee(req.user)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  res.json(db.getReferralRequestsByEmployee(req.user!.id));
+});
+
+apiRouter.get('/referral/requests/:id/history', authMiddleware, (req: Request, res: Response) => {
+  const r = db.getReferralRequestById(req.params.id);
+  if (!r) { res.status(404).json({ error: 'Not found' }); return; }
+  if (r.candidateUserId !== req.user!.id && r.employeeUserId !== req.user!.id && req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  res.json(db.getReferralStatusHistory(req.params.id));
+});
+
+apiRouter.patch('/referral/requests/:id', authMiddleware, (req: Request, res: Response) => {
+  const { status, note } = req.body || {};
+  if (!status) { res.status(400).json({ error: 'status is required' }); return; }
+  const result = db.updateReferralRequestStatus(req.params.id, req.user!.id, status, note);
+  if (!result.ok) { res.status(400).json({ error: result.error }); return; }
+  const r = result.request!;
+  // notify candidate on status change
+  db.createNotification(r.candidateUserId, 'referral_status_changed', 'Referral status updated', `Your referral request is now ${r.status}.`, `/my-referrals`);
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'referral', action: 'REFERRAL_REQUEST_STATUS_UPDATED', details: `Request ${req.params.id} -> ${status}.`, severity: 'info' });
+  res.json(r);
+});
+
+apiRouter.post('/referral/requests/:id/withdraw', authMiddleware, (req: Request, res: Response) => {
+  const result = db.updateReferralRequestStatus(req.params.id, req.user!.id, 'withdrawn', (req.body || {}).note);
+  if (!result.ok) { res.status(400).json({ error: result.error }); return; }
+  res.json(result.request);
+});
+
+// --- Candidate discovery (anonymous) ---
+apiRouter.get('/referral/candidates/search', authMiddleware, (req: Request, res: Response) => {
+  if (!isEmployee(req.user) && !isRecruiter(req.user)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  const skills = req.query.skills ? String(req.query.skills).split(',').map(s=>s.trim()).filter(Boolean) : undefined;
+  const location = req.query.location ? String(req.query.location) : undefined;
+  const minExperience = req.query.minExperience ? Number(req.query.minExperience) : undefined;
+  const jobId = req.query.jobId ? String(req.query.jobId) : undefined;
+  const results = db.searchCandidateProfiles({ id: req.user!.id, role: req.user!.role, capabilities: req.user!.capabilities || [] }, { skills, location, minExperience, jobId });
+  res.json(results);
+});
+
+// --- Shortlists ---
+apiRouter.post('/referral/shortlists', authMiddleware, (req: Request, res: Response) => {
+  if (!isEmployee(req.user) && !isRecruiter(req.user)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  const { candidateUserId, note } = req.body || {};
+  if (!candidateUserId) { res.status(400).json({ error: 'candidateUserId required' }); return; }
+  const s = db.createShortlist(req.user!.id, candidateUserId, note);
+  res.status(201).json(s);
+});
+
+apiRouter.get('/referral/shortlists', authMiddleware, (req: Request, res: Response) => {
+  if (!isEmployee(req.user) && !isRecruiter(req.user)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  res.json(db.getShortlists(req.user!.id));
+});
+
+apiRouter.delete('/referral/shortlists/:id', authMiddleware, (req: Request, res: Response) => {
+  const ok = db.deleteShortlist(req.user!.id, req.params.id);
+  if (!ok) { res.status(404).json({ error: 'Not found' }); return; }
+  res.json({ deleted: true });
+});
+
+// --- Notifications ---
+apiRouter.get('/notifications', authMiddleware, (req: Request, res: Response) => {
+  const limit = Math.min(Number((req.query as any).limit) || 1000, 1000);
+  const offset = Math.max(Number((req.query as any).offset) || 0, 0);
+  res.json(db.getNotifications(req.user!.id).slice(offset, offset + limit));
+});
+
+apiRouter.patch('/notifications/:id/read', authMiddleware, (req: Request, res: Response) => {
+  const ok = db.markNotificationRead(req.user!.id, req.params.id);
+  if (!ok) { res.status(404).json({ error: 'Not found' }); return; }
+  res.json({ read: true });
+});
+
+apiRouter.post('/notifications/read-all', authMiddleware, (req: Request, res: Response) => {
+  db.markAllNotificationsRead(req.user!.id);
+  res.json({ success: true });
+});
+
+// ==========================================
+// Employment & Background Verification (Milestone 3)
+// ==========================================
+
+// Employment verification
+apiRouter.get('/verification/employment', authMiddleware, (req: Request, res: Response) => {
+  const all = req.user!.role === 'admin' || req.user!.role === 'verifier';
+  res.json(db.getEmploymentVerifications(req.user!.id, all));
+});
+
+apiRouter.post('/verification/employment', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const { employer, designation, startDate, endDate, isCurrent, corporateEmail, method } = req.body || {};
+  if (!employer) { res.status(400).json({ error: 'employer is required' }); return; }
+  const ev = db.createEmploymentVerification(userId, { employer, designation, startDate, endDate, isCurrent, corporateEmail, method });
+  db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'verification', action: 'EMPLOYMENT_VERIFICATION_CREATED', details: `Created employment verification for ${employer}.`, severity: 'info' });
+  res.status(201).json(ev);
+});
+
+apiRouter.get('/verification/employment/:id', authMiddleware, (req: Request, res: Response) => {
+  const ev = db.getEmploymentVerificationById(req.params.id);
+  if (!ev) { res.status(404).json({ error: 'Not found' }); return; }
+  if (ev.userId !== req.user!.id && req.user!.role !== 'admin' && req.user!.role !== 'verifier') { res.status(403).json({ error: 'Forbidden' }); return; }
+  // minimum necessary: non-owners see status only
+  if (ev.userId !== req.user!.id) {
+    res.json({ id: ev.id, userId: ev.userId, status: ev.status, method: ev.method, verifiedAt: ev.verifiedAt });
+    return;
+  }
+  res.json(ev);
+});
+
+apiRouter.post('/verification/employment/:id/consent', authMiddleware, (req: Request, res: Response) => {
+  const ev = db.grantEmploymentConsent(req.params.id, req.user!.id, req.ip, req.get('user-agent') || undefined);
+  if (!ev) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'verification', action: 'EMPLOYMENT_CONSENT_GRANTED', details: `Consent granted for verification ${req.params.id}.`, severity: 'success' });
+  res.json(ev);
+});
+
+apiRouter.post('/verification/employment/:id/consent/withdraw', authMiddleware, (req: Request, res: Response) => {
+  const ev = db.withdrawEmploymentConsent(req.params.id, req.user!.id);
+  if (!ev) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'verification', action: 'EMPLOYMENT_CONSENT_WITHDRAWN', details: `Consent withdrawn for verification ${req.params.id}.`, severity: 'warn' });
+  res.json(ev);
+});
+
+apiRouter.post('/verification/employment/:id/email-otp', authMiddleware, (req: Request, res: Response) => {
+  const r = db.sendEmploymentEmailOtp(req.params.id, req.user!.id);
+  if (!r) { res.status(400).json({ error: 'Unable to send OTP' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'verification', action: 'EMPLOYMENT_EMAIL_OTP_SENT', details: `OTP sent to ${r.email}.`, severity: 'info' });
+  const expose = process.env.NODE_ENV !== 'production';
+  res.json({ sent: true, expiresAt: r.expiresAt, ...(expose ? { verificationCode: r.code } : {}) });
+});
+
+apiRouter.post('/verification/employment/:id/email-otp/confirm', authMiddleware, (req: Request, res: Response) => {
+  const { code } = req.body || {};
+  const ok = db.confirmEmploymentEmailOtp(req.params.id, req.user!.id, String(code || ''));
+  if (!ok) { res.status(400).json({ error: 'Invalid or expired OTP' }); return; }
+  // mark method email_otp and move to under_review? keep submitted; admin verifies
+  const ev = db.updateEmploymentVerification(req.params.id, req.user!.id, { method: 'email_otp' });
+  res.json({ verified: true, verification: ev });
+});
+
+apiRouter.post('/verification/employment/:id/documents', authMiddleware, (req: Request, res: Response) => {
+  const { documentId } = req.body || {};
+  const ev = db.attachEmploymentDocument(req.params.id, req.user!.id, documentId);
+  if (!ev) { res.status(400).json({ error: 'Unable to attach document' }); return; }
+  res.json(ev);
+});
+
+// verifier/admin update status
+apiRouter.patch('/verification/employment/:id', authMiddleware, (req: Request, res: Response) => {
+  const actor = req.user!;
+  if (actor.role !== 'admin' && actor.role !== 'verifier' && !isVerifier(actor)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  const { status, method, notes, verifiedAt, expiresAt } = req.body || {};
+  const allowedStatuses = ['under_review', 'verified', 'rejected', 'expired'];
+  if (status && !allowedStatuses.includes(status)) { res.status(400).json({ error: 'Invalid status' }); return; }
+  // Do not allow marking verified without consent
+  const ev = db.getEmploymentVerificationById(req.params.id);
+  if (!ev) { res.status(404).json({ error: 'Not found' }); return; }
+  if (status === 'verified' && !ev.consentGivenAt) { res.status(400).json({ error: 'Consent required before verification' }); return; }
+  if (status === 'verified') {
+    // never claim completion unless authorized process; here verifier/admin action counts
+    const updated = db.updateEmploymentVerification(req.params.id, actor.id, { status: 'verified', method: method || ev.method, verifiedAt: new Date().toISOString(), verifiedBy: actor.id, expiresAt, notes });
+    db.addAuditLog({ userId: actor.id, timestamp: new Date().toISOString(), category: 'verification', action: 'EMPLOYMENT_VERIFIED', details: `Employment verification ${req.params.id} marked verified by ${actor.id}.`, severity: 'success' });
+    // notify candidate
+    db.createNotification(ev.userId, 'verification_completed', 'Employment verification completed', 'Your employment verification has been completed.', '/employment-verification');
+    res.json(updated);
+    return;
+  }
+  const updated = db.updateEmploymentVerification(req.params.id, actor.id, { status, method, notes, expiresAt });
+  db.addAuditLog({ userId: actor.id, timestamp: new Date().toISOString(), category: 'verification', action: 'EMPLOYMENT_VERIFICATION_UPDATED', details: `Employment verification ${req.params.id} -> ${status}.`, severity: 'info' });
+  res.json(updated);
+});
+
+// Background verification
+apiRouter.get('/verification/bgv', authMiddleware, (req: Request, res: Response) => {
+  const all = req.user!.role === 'admin' || req.user!.role === 'verifier';
+  res.json(db.getBgvRequests(req.user!.id, all));
+});
+
+apiRouter.post('/verification/bgv', authMiddleware, (req: Request, res: Response) => {
+  const userId = req.user!.id;
+  const { checks } = req.body || {};
+  const r = db.createBgvRequest(userId, checks);
+  db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'verification', action: 'BGV_CREATED', details: `BGV request ${r.id} created.`, severity: 'info' });
+  res.status(201).json(r);
+});
+
+apiRouter.get('/verification/bgv/:id', authMiddleware, (req: Request, res: Response) => {
+  const r = db.getBgvRequestById(req.params.id);
+  if (!r) { res.status(404).json({ error: 'Not found' }); return; }
+  if (r.userId !== req.user!.id && req.user!.role !== 'admin' && req.user!.role !== 'verifier') { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (r.userId !== req.user!.id) {
+    res.json({ id: r.id, userId: r.userId, status: r.status, checks: r.checks.map(c => ({ type: c.type, status: c.status })) });
+    return;
+  }
+  res.json(r);
+});
+
+apiRouter.post('/verification/bgv/:id/consent', authMiddleware, (req: Request, res: Response) => {
+  const r = db.grantBgvConsent(req.params.id, req.user!.id, req.ip, req.get('user-agent') || undefined);
+  if (!r) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'verification', action: 'BGV_CONSENT_GRANTED', details: `Consent granted for BGV ${req.params.id}.`, severity: 'success' });
+  res.json(r);
+});
+
+apiRouter.post('/verification/bgv/:id/consent/withdraw', authMiddleware, (req: Request, res: Response) => {
+  const r = db.withdrawBgvConsent(req.params.id, req.user!.id);
+  if (!r) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'verification', action: 'BGV_CONSENT_WITHDRAWN', details: `Consent withdrawn for BGV ${req.params.id}.`, severity: 'warn' });
+  res.json(r);
+});
+
+apiRouter.post('/verification/bgv/:id/documents', authMiddleware, (req: Request, res: Response) => {
+  const { documentId } = req.body || {};
+  const r = db.attachBgvDocument(req.params.id, req.user!.id, documentId);
+  if (!r) { res.status(400).json({ error: 'Unable to attach document' }); return; }
+  res.json(r);
+});
+
+apiRouter.patch('/verification/bgv/:id/checks/:type', authMiddleware, (req: Request, res: Response) => {
+  const actor = req.user!;
+  if (actor.role !== 'admin' && actor.role !== 'verifier' && !isVerifier(actor)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  const { status, result } = req.body || {};
+  const allowed = ['pending', 'verified', 'failed', 'skipped'];
+  if (!allowed.includes(status)) { res.status(400).json({ error: 'Invalid status' }); return; }
+  const r = db.updateBgvCheck(req.params.id, req.params.type as any, status, result);
+  if (!r) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: actor.id, timestamp: new Date().toISOString(), category: 'verification', action: 'BGV_CHECK_UPDATED', details: `BGV ${req.params.id} check ${req.params.type} -> ${status}.`, severity: 'info' });
+  if (r.status === 'completed') {
+    db.createNotification(r.userId, 'verification_completed', 'Background verification completed', 'Your background verification has been completed.', '/background-verification');
+  }
+  res.json(r);
+});
+
+// Documents
+apiRouter.post('/documents', authMiddleware, (req: Request, res: Response) => {
+  const { kind, mimeType, size, contentBase64 } = req.body || {};
+  const allowedKinds = ['employment_proof', 'identity', 'education', 'address', 'reference', 'other'];
+  if (!allowedKinds.includes(kind)) { res.status(400).json({ error: 'Invalid document kind' }); return; }
+  const doc = db.createVerificationDocument(req.user!.id, kind, mimeType || 'application/octet-stream', Number(size || 0), contentBase64);
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'verification', action: 'DOCUMENT_UPLOADED', details: `Uploaded document ${doc.id} (${kind}).`, severity: 'info' });
+  res.status(201).json(doc);
+});
+
+apiRouter.get('/documents/:id', authMiddleware, (req: Request, res: Response) => {
+  const doc = db.getVerificationDocument(req.params.id);
+  if (!doc) { res.status(404).json({ error: 'Not found' }); return; }
+  // authorization: owner or verifier/admin
+  if (doc.ownerUserId !== req.user!.id && req.user!.role !== 'admin' && req.user!.role !== 'verifier' && !isVerifier(req.user)) {
+    res.status(403).json({ error: 'Forbidden' }); return;
+  }
+  // minimum necessary: non-owners do not get content or storage path
+  if (doc.ownerUserId !== req.user!.id) {
+    res.json({ id: doc.id, kind: doc.kind, mimeType: doc.mimeType, size: doc.size, uploadedAt: doc.uploadedAt });
+    return;
+  }
+  res.json(doc);
+});
+
+apiRouter.get('/documents/:id/content', authMiddleware, (req: Request, res: Response) => {
+  const doc = db.getVerificationDocument(req.params.id);
+  if (!doc) { res.status(404).json({ error: 'Not found' }); return; }
+  if (doc.ownerUserId !== req.user!.id && req.user!.role !== 'admin' && req.user!.role !== 'verifier' && !isVerifier(req.user)) {
+    res.status(403).json({ error: 'Forbidden' }); return;
+  }
+  const content = db.getVerificationDocumentContent(doc.id);
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'verification', action: 'DOCUMENT_ACCESSED', details: `Document ${doc.id} content accessed by ${req.user!.id}.`, severity: 'info' });
+  res.json({ id: doc.id, mimeType: doc.mimeType, contentBase64: content || null });
+});
+
+apiRouter.delete('/documents/:id', authMiddleware, (req: Request, res: Response) => {
+  const ok = db.deleteVerificationDocument(req.params.id, req.user!.id);
+  if (!ok) { res.status(404).json({ error: 'Not found' }); return; }
+  res.json({ deleted: true });
+});
+
+// Consent records
+apiRouter.get('/consent-records', authMiddleware, (req: Request, res: Response) => {
+  res.json(db.getConsentRecords(req.user!.id));
+});
+
+// ==========================================
+// Admin Analytics & Hardening (Milestone 5)
+// ==========================================
+
+apiRouter.get('/admin/analytics/referrals', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  res.json(db.getAdminReferralAnalytics());
+});
+
+apiRouter.post('/admin/cleanup', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const result = db.cleanupExpiredDocuments();
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'security', action: 'CLEANUP_RUN', details: `Removed ${result.removedDocuments} expired documents.`, severity: 'info' });
+  res.json(result);
+});
+
+// ==========================================
+// Resume access consent (Milestone 6)
+// ==========================================
+
+apiRouter.post('/referral/candidates/:userId/resume-access-request', authMiddleware, (req: Request, res: Response) => {
+  if (!isEmployee(req.user) && !isRecruiter(req.user)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  const candidateUserId = req.params.userId;
+  db.createNotification(candidateUserId, 'resume_access_requested', 'Resume access requested', `A ${req.user!.role} requested access to your resume.`, '/notifications');
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'privacy', action: 'RESUME_ACCESS_REQUESTED', details: `Resume access requested for candidate ${candidateUserId}.`, severity: 'info' });
+  res.json({ requested: true });
+});
+
+apiRouter.post('/referral/resume-access/:requesterUserId/grant', authMiddleware, (req: Request, res: Response) => {
+  const candidateUserId = req.user!.id;
+  const requesterUserId = req.params.requesterUserId;
+  const rec = db.grantResumeAccess(candidateUserId, requesterUserId, req.ip, req.get('user-agent') || undefined);
+  db.createNotification(requesterUserId, 'resume_access_granted', 'Resume access granted', 'A candidate granted access to their resume.', '/candidate-search');
+  db.addAuditLog({ userId: candidateUserId, timestamp: new Date().toISOString(), category: 'privacy', action: 'RESUME_ACCESS_GRANTED', details: `Granted resume access to ${requesterUserId}.`, severity: 'success' });
+  res.json(rec);
+});
+
+apiRouter.post('/referral/resume-access/:requesterUserId/withdraw', authMiddleware, (req: Request, res: Response) => {
+  const candidateUserId = req.user!.id;
+  const requesterUserId = req.params.requesterUserId;
+  const ok = db.withdrawResumeAccess(candidateUserId, requesterUserId);
+  if (!ok) { res.status(404).json({ error: 'No active consent' }); return; }
+  db.addAuditLog({ userId: candidateUserId, timestamp: new Date().toISOString(), category: 'privacy', action: 'RESUME_ACCESS_WITHDRAWN', details: `Withdrew resume access from ${requesterUserId}.`, severity: 'warn' });
+  res.json({ withdrawn: true });
+});
+
+apiRouter.get('/referral/candidates/:userId/resume', authMiddleware, (req: Request, res: Response) => {
+  if (!isEmployee(req.user) && !isRecruiter(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const candidateUserId = req.params.userId;
+  const requesterUserId = req.user!.id;
+  if (candidateUserId !== requesterUserId && !db.hasResumeAccess(candidateUserId, requesterUserId)) {
+    res.status(403).json({ error: 'Resume access not authorized' });
+    return;
+  }
+  const resume = db.getLatestResume(candidateUserId);
+  if (!resume) { res.status(404).json({ error: 'No resume' }); return; }
+  db.addAuditLog({ userId: requesterUserId, timestamp: new Date().toISOString(), category: 'privacy', action: 'RESUME_ACCESSED', details: `Resume accessed for candidate ${candidateUserId}.`, severity: 'info' });
+  res.json(resume);
 });
 
 // ==========================================
@@ -880,7 +1546,9 @@ apiRouter.get('/agent/discover/:jobId', authMiddleware, (req: Request, res: Resp
 
 apiRouter.get('/jobs', authMiddleware, (req: Request, res: Response) => {
   const userId = req.user!.id;
-  const jobs = db.getJobs(userId);
+  const limit = Math.min(Number((req.query as any).limit) || 1000, 1000);
+  const offset = Math.max(Number((req.query as any).offset) || 0, 0);
+  const jobs = db.getJobs(userId).slice(offset, offset + limit);
   res.json(jobs);
 });
 

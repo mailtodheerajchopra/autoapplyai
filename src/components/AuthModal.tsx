@@ -30,6 +30,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [roleIntent, setRoleIntent] = useState('candidate');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -42,7 +43,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
     try {
       if (isRegister) {
         if (!name.trim()) throw new Error('Please enter your full name');
-        await register(name, email, password);
+        await register(name, email, password, roleIntent);
       } else {
         await login(email, password);
       }
@@ -85,20 +86,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
 
         <form onSubmit={handleSubmit} className="space-y-3 text-xs">
             {isRegister && (
-              <div className="space-y-1">
-                <label className="text-slate-300 font-medium">Full Name</label>
-                <div className="relative">
-                  <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. John Doe"
-                    className="w-full h-9 pl-9 pr-3 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
-                  />
+              <>
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-medium">Full Name</label>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      required
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="e.g. John Doe"
+                      className="w-full h-9 pl-9 pr-3 rounded-lg bg-slate-950 border border-slate-800 text-white placeholder-slate-400 focus:outline-none focus:border-indigo-500"
+                    />
+                  </div>
                 </div>
-              </div>
+                <div className="space-y-1">
+                  <label className="text-slate-300 font-medium">Register as</label>
+                  <select
+                    value={roleIntent}
+                    onChange={(e) => setRoleIntent(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-slate-950 border border-slate-800 text-white focus:outline-none focus:border-indigo-500"
+                  >
+                    <option value="candidate">Candidate</option>
+                    <option value="employee">Employee / Referrer</option>
+                    <option value="recruiter">Recruiter</option>
+                  </select>
+                </div>
+              </>
             )}
 
             <div className="space-y-1">

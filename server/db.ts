@@ -10,8 +10,26 @@ import {
   AgentRunLog,
   DiscoveryJob,
   DiscoveryPoolEntry,
+  CandidateReferralProfile,
+  EmployeeProfile,
+  CompanyProfile,
+  ReferralJob,
+  ReferralRequest,
+  ReferralRequestStatus,
+  ReferralStatusEvent,
+  Notification,
+  CandidateShortlist,
+  EmploymentVerification,
+  BackgroundVerificationRequest,
+  VerificationDocument,
+  VerificationDocumentKind,
+  ConsentRecord,
+  BgvCheckType,
+  BgvCheckStatus,
 } from './types.js';
 import { getStore, StateStore } from './storage.js';
+import { extractJobRequirements, scoreCandidate, normalizeSkills } from './matching.js';
+import { sendEmail, emailNotificationsEnabled } from './email.js';
 
 export interface DatabaseSchema {
   users: User[];
@@ -24,6 +42,18 @@ export interface DatabaseSchema {
   agentLogs: AgentRunLog[];
   discoveryJobs: DiscoveryJob[];
   discoveryPool: DiscoveryPoolEntry[];
+  candidateReferralProfiles: CandidateReferralProfile[];
+  employeeProfiles: EmployeeProfile[];
+  companyProfiles: CompanyProfile[];
+  referralJobs: ReferralJob[];
+  referralRequests: ReferralRequest[];
+  referralStatusHistory: ReferralStatusEvent[];
+  notifications: Notification[];
+  candidateShortlists: CandidateShortlist[];
+  employmentVerifications: EmploymentVerification[];
+  backgroundVerificationRequests: BackgroundVerificationRequest[];
+  verificationDocuments: VerificationDocument[];
+  consentRecords: ConsentRecord[];
   systemSecrets?: Record<string, string>;
 }
 
@@ -130,6 +160,18 @@ class DatabaseService {
     if (!stored.systemAuditLogs) stored.systemAuditLogs = [];
     if (!stored.discoveryJobs) stored.discoveryJobs = [];
     if (!stored.discoveryPool) stored.discoveryPool = [];
+    if (!stored.candidateReferralProfiles) stored.candidateReferralProfiles = [];
+    if (!stored.employeeProfiles) stored.employeeProfiles = [];
+    if (!stored.companyProfiles) stored.companyProfiles = [];
+    if (!stored.referralJobs) stored.referralJobs = [];
+    if (!stored.referralRequests) stored.referralRequests = [];
+    if (!stored.referralStatusHistory) stored.referralStatusHistory = [];
+    if (!stored.notifications) stored.notifications = [];
+    if (!stored.candidateShortlists) stored.candidateShortlists = [];
+    if (!stored.employmentVerifications) stored.employmentVerifications = [];
+    if (!stored.backgroundVerificationRequests) stored.backgroundVerificationRequests = [];
+    if (!stored.verificationDocuments) stored.verificationDocuments = [];
+    if (!stored.consentRecords) stored.consentRecords = [];
     this.applyAdminCredentialOverride(stored);
     // Repair legacy/partial jobs once at hydration: real Gemini output
     // may lack the skill arrays the UI assumes. One pass, then persisted.
@@ -163,9 +205,23 @@ class DatabaseService {
     if (!Array.isArray(stored.accounts)) stored.accounts = [];
     if (!Array.isArray(stored.discoveryJobs)) stored.discoveryJobs = [];
     if (!Array.isArray(stored.discoveryPool)) stored.discoveryPool = [];
+    if (!Array.isArray(stored.candidateReferralProfiles)) stored.candidateReferralProfiles = [];
+    if (!Array.isArray(stored.employeeProfiles)) stored.employeeProfiles = [];
+    if (!Array.isArray(stored.companyProfiles)) stored.companyProfiles = [];
+    if (!Array.isArray(stored.referralJobs)) stored.referralJobs = [];
+    if (!Array.isArray(stored.referralRequests)) stored.referralRequests = [];
+    if (!Array.isArray(stored.referralStatusHistory)) stored.referralStatusHistory = [];
+    if (!Array.isArray(stored.notifications)) stored.notifications = [];
+    if (!Array.isArray(stored.candidateShortlists)) stored.candidateShortlists = [];
+    if (!Array.isArray(stored.employmentVerifications)) stored.employmentVerifications = [];
+    if (!Array.isArray(stored.backgroundVerificationRequests)) stored.backgroundVerificationRequests = [];
+    if (!Array.isArray(stored.verificationDocuments)) stored.verificationDocuments = [];
+    if (!Array.isArray(stored.consentRecords)) stored.consentRecords = [];
     if (!stored.systemSecrets || typeof stored.systemSecrets !== 'object') stored.systemSecrets = {};
     stored.users.forEach((u: any) => {
       if (!u.role) u.role = 'candidate';
+      if (!Array.isArray(u.capabilities)) u.capabilities = [];
+      if (!u.updatedAt) u.updatedAt = u.createdAt || new Date().toISOString();
     });
     // Opt-in demo personas: scrub legacy seed users from any stored
     // snapshot unless explicitly enabled, so known sample passwords
@@ -348,7 +404,9 @@ class DatabaseService {
       passwordHash: hashAdmin,
       salt: saltAdmin,
       role: 'admin',
+      capabilities: ['can_admin', 'can_recruit', 'can_verify', 'can_refer'],
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
   }
 
@@ -374,7 +432,9 @@ class DatabaseService {
       passwordHash: hash1,
       salt: salt1,
       role: 'candidate',
+      capabilities: [],
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     const user2: User = {
@@ -384,7 +444,9 @@ class DatabaseService {
       passwordHash: hash2,
       salt: salt2,
       role: 'candidate',
+      capabilities: [],
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
     // Admin is built env-first (ADMIN_EMAIL/ADMIN_PASSWORD) with a random
@@ -761,6 +823,18 @@ class DatabaseService {
         },
       ] : [],
       systemSecrets: {},
+      candidateReferralProfiles: [],
+      employeeProfiles: [],
+      companyProfiles: [],
+      referralJobs: [],
+      referralRequests: [],
+      referralStatusHistory: [],
+      notifications: [],
+      candidateShortlists: [],
+      employmentVerifications: [],
+      backgroundVerificationRequests: [],
+      verificationDocuments: [],
+      consentRecords: [],
     };
 
     // The seeded snapshot is returned as the in-memory starting point;
@@ -778,13 +852,14 @@ class DatabaseService {
     return this.data.users.find(u => u.id === id);
   }
 
-  createUser(email: string, name: string, passwordPlain: string, role?: 'candidate' | 'admin'): User {
+  createUser(email: string, name: string, passwordPlain: string, role?: 'candidate' | 'employee' | 'recruiter' | 'admin' | 'verifier'): User {
     const salt = crypto.randomBytes(16).toString('hex');
     const hash = crypto.pbkdf2Sync(passwordPlain, salt, 1000, 64, 'sha512').toString('hex');
     // Security: role NEVER inferred from the email (an email containing
     // 'admin' no longer grants anything). Only an explicit admin grant or
     // the seed creates admins.
-    const assignedRole: 'candidate' | 'admin' = role === 'admin' ? 'admin' : 'candidate';
+    const allowedRoles = ['candidate', 'employee', 'recruiter', 'admin', 'verifier'] as const;
+    const assignedRole = (role && allowedRoles.includes(role as any)) ? role : 'candidate';
     const newUser: User = {
       id: 'usr_' + crypto.randomUUID().slice(0, 8),
       email: email.trim().toLowerCase(),
@@ -792,7 +867,9 @@ class DatabaseService {
       passwordHash: hash,
       salt,
       role: assignedRole,
+      capabilities: assignedRole === 'admin' ? ['can_admin', 'can_recruit', 'can_verify', 'can_refer'] : [],
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
     this.data.users.push(newUser);
 
@@ -838,11 +915,23 @@ class DatabaseService {
     return newUser;
   }
 
-  updateUserRole(userId: string, role: 'candidate' | 'admin'): boolean {
+  updateUserRole(userId: string, role: 'candidate' | 'employee' | 'recruiter' | 'admin' | 'verifier'): boolean {
     const user = this.data.users.find(u => u.id === userId);
     if (!user) return false;
     user.role = role;
+    user.updatedAt = new Date().toISOString();
     this.persist();
+    void this.saveNow();
+    return true;
+  }
+
+  updateUserCapabilities(userId: string, capabilities: string[]): boolean {
+    const user = this.data.users.find(u => u.id === userId);
+    if (!user) return false;
+    user.capabilities = Array.from(new Set(capabilities));
+    user.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
     return true;
   }
 
@@ -874,6 +963,17 @@ class DatabaseService {
     this.data.agentLogs = this.data.agentLogs.filter(l => l.userId !== userId);
     this.data.discoveryJobs = this.data.discoveryJobs.filter(j => j.userId !== userId);
     this.data.systemAuditLogs = this.data.systemAuditLogs.filter((l: { userId?: string }) => l.userId !== userId);
+    this.data.candidateReferralProfiles = this.data.candidateReferralProfiles.filter(p => p.userId !== userId);
+    this.data.employeeProfiles = this.data.employeeProfiles.filter(p => p.userId !== userId);
+    this.data.referralJobs = this.data.referralJobs.filter(j => j.postedByUserId !== userId);
+    this.data.referralRequests = this.data.referralRequests.filter(r => r.candidateUserId !== userId && r.employeeUserId !== userId);
+    this.data.referralStatusHistory = this.data.referralStatusHistory.filter(e => e.actorUserId !== userId);
+    this.data.notifications = this.data.notifications.filter(n => n.userId !== userId);
+    this.data.candidateShortlists = this.data.candidateShortlists.filter(s => s.employeeUserId !== userId && s.candidateUserId !== userId);
+    this.data.employmentVerifications = this.data.employmentVerifications.filter(v => v.userId !== userId);
+    this.data.backgroundVerificationRequests = this.data.backgroundVerificationRequests.filter(v => v.userId !== userId);
+    this.data.verificationDocuments = this.data.verificationDocuments.filter(d => d.ownerUserId !== userId);
+    this.data.consentRecords = this.data.consentRecords.filter(c => c.userId !== userId);
     this.persist();
     void this.saveNow();
     return true;
@@ -884,11 +984,11 @@ class DatabaseService {
     return crypto.timingSafeEqual(Buffer.from(user.passwordHash), Buffer.from(hash));
   }
 
-  getAllUsersPublic(): { id: string; email: string; name: string; role: 'candidate' | 'admin' }[] {
+  getAllUsersPublic(): { id: string; email: string; name: string; role: 'candidate' | 'employee' | 'recruiter' | 'admin' | 'verifier' }[] {
     return this.data.users.map(u => ({ id: u.id, email: u.email, name: u.name, role: u.role || 'candidate' }));
   }
 
-  getDemoPersonas(): { id: string; email: string; name: string; role: 'candidate' | 'admin' }[] {
+  getDemoPersonas(): { id: string; email: string; name: string; role: 'candidate' | 'employee' | 'recruiter' | 'admin' | 'verifier' }[] {
     const demoIds = ['usr_alex_chen', 'usr_priya_sharma', 'usr_admin'];
     return this.data.users
       .filter(u => demoIds.includes(u.id))
@@ -914,6 +1014,51 @@ class DatabaseService {
         createdAt: u.createdAt,
       };
     });
+  }
+
+  getAdminReferralAnalytics() {
+    const totalCandidates = this.data.users.filter(u => u.role === 'candidate' || u.role === 'employee' || u.role === 'recruiter').length;
+    const verifiedEmployees = this.data.employeeProfiles.filter(p => p.affiliationStatus === 'verified').length;
+    const activeReferralJobs = this.data.referralJobs.filter(j => j.status === 'published' || j.status === 'active').length;
+    const referralRequests = this.data.referralRequests.length;
+    const accepted = this.data.referralRequests.filter(r => r.status === 'accepted' || r.status === 'referral_submitted' || r.status === 'selected').length;
+    const interviews = this.data.referralRequests.filter(r => r.status === 'interview_scheduled' || r.status === 'selected').length;
+    const successful = this.data.referralRequests.filter(r => r.status === 'selected').length;
+    const acceptanceRate = referralRequests ? Math.round((accepted / referralRequests) * 100) : 0;
+    const interviewConversionRate = accepted ? Math.round((interviews / accepted) * 100) : 0;
+    // most active companies
+    const counts: Record<string, number> = {};
+    for (const j of this.data.referralJobs) counts[j.company] = (counts[j.company] || 0) + 1;
+    const mostActiveCompanies = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([company, jobs]) => ({ company, jobs }));
+    return {
+      totalCandidates,
+      verifiedEmployees,
+      activeReferralJobs,
+      referralRequests,
+      acceptanceRate,
+      interviewConversionRate,
+      successfulReferrals: successful,
+      mostActiveCompanies,
+    };
+  }
+
+  cleanupExpiredDocuments() {
+    const now = Date.now();
+    const expired = this.data.verificationDocuments.filter(d => d.expiresAt && new Date(d.expiresAt).getTime() < now);
+    for (const d of expired) {
+      this.data.verificationDocuments = this.data.verificationDocuments.filter(x => x.id !== d.id);
+      void this.setSystemSecret(`vdoc_content_${d.id}`, '');
+    }
+    // expire old employment verifications
+    for (const ev of this.data.employmentVerifications) {
+      if (ev.expiresAt && new Date(ev.expiresAt).getTime() < now && ev.status === 'verified') {
+        ev.status = 'expired';
+        ev.updatedAt = new Date().toISOString();
+      }
+    }
+    this.persist();
+    void this.saveNow();
+    return { removedDocuments: expired.length };
   }
 
   getAdminPlatformStats() {
@@ -988,6 +1133,745 @@ class DatabaseService {
     this.persist();
     void this.saveNow();
     return profile;
+  }
+
+  // Candidate referral profiles
+  getCandidateReferralProfile(userId: string): CandidateReferralProfile | undefined {
+    return this.data.candidateReferralProfiles.find(p => p.userId === userId);
+  }
+
+  upsertCandidateReferralProfile(userId: string, updates: Partial<CandidateReferralProfile>): CandidateReferralProfile {
+    let profile = this.data.candidateReferralProfiles.find(p => p.userId === userId);
+    if (!profile) {
+      profile = {
+        id: 'crp_' + userId,
+        userId,
+        currentEmployer: '',
+        previousEmployers: [],
+        preferredCompanies: [],
+        preferredTitles: [],
+        preferredLocations: [],
+        noticePeriodDays: 0,
+        availabilityDate: '',
+        skills: [],
+        experienceYears: 0,
+        educationSummary: '',
+        employmentHistory: [],
+        visibility: 'private',
+        referralOptIn: false,
+        submittedForReferral: false,
+        profileCompleteness: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      this.data.candidateReferralProfiles.push(profile);
+    }
+    Object.assign(profile, updates, { updatedAt: new Date().toISOString() });
+    this.persist();
+    void this.saveNow();
+    return profile;
+  }
+
+  // Employee / referrer profiles
+  getEmployeeProfile(userId: string): EmployeeProfile | undefined {
+    return this.data.employeeProfiles.find(p => p.userId === userId);
+  }
+
+  upsertEmployeeProfile(userId: string, updates: Partial<EmployeeProfile>): EmployeeProfile {
+    let profile = this.data.employeeProfiles.find(p => p.userId === userId);
+    if (!profile) {
+      profile = {
+        id: 'emp_' + userId,
+        userId,
+        corporateEmail: '',
+        company: '',
+        title: '',
+        department: '',
+        emailVerified: false,
+        affiliationStatus: 'unverified',
+        affiliationEvidence: [],
+        headline: '',
+        summary: '',
+        linkedinUrl: '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      this.data.employeeProfiles.push(profile);
+    }
+    Object.assign(profile, updates, { updatedAt: new Date().toISOString() });
+    this.persist();
+    void this.saveNow();
+    return profile;
+  }
+
+  // Company profiles (dedupe by name)
+  findOrCreateCompany(name: string, domain: string = ''): CompanyProfile {
+    const normalized = name.trim().toLowerCase();
+    let company = this.data.companyProfiles.find(c => c.name.trim().toLowerCase() === normalized);
+    if (!company) {
+      company = {
+        id: 'cmp_' + crypto.randomUUID().slice(0, 8),
+        name: name.trim(),
+        domain: domain.trim().toLowerCase(),
+        verified: false,
+        createdAt: new Date().toISOString(),
+      };
+      this.data.companyProfiles.push(company);
+      this.persist();
+      void this.saveNow();
+    }
+    return company;
+  }
+
+  // ---------- Verification (Milestone 3) ----------
+  // Employment verification
+  getEmploymentVerifications(userId: string, all = false): EmploymentVerification[] {
+    const list = all ? this.data.employmentVerifications : this.data.employmentVerifications.filter(v => v.userId === userId);
+    return list.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+  createEmploymentVerification(userId: string, payload: Partial<EmploymentVerification>): EmploymentVerification {
+    const ev: EmploymentVerification = {
+      id: 'ev_' + crypto.randomUUID().slice(0, 8),
+      userId,
+      employer: payload.employer || '',
+      designation: payload.designation || '',
+      startDate: payload.startDate || '',
+      endDate: payload.endDate,
+      isCurrent: !!payload.isCurrent,
+      corporateEmail: payload.corporateEmail || '',
+      status: 'pending_consent',
+      method: (payload.method as any) || 'document_review',
+      documents: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.data.employmentVerifications.unshift(ev);
+    this.persist();
+    void this.saveNow();
+    return ev;
+  }
+  getEmploymentVerificationById(id: string): EmploymentVerification | undefined {
+    return this.data.employmentVerifications.find(v => v.id === id);
+  }
+  grantEmploymentConsent(id: string, userId: string, ip?: string, ua?: string): EmploymentVerification | undefined {
+    const ev = this.data.employmentVerifications.find(v => v.id === id && v.userId === userId);
+    if (!ev) return undefined;
+    ev.consentGivenAt = new Date().toISOString();
+    ev.status = 'submitted';
+    ev.updatedAt = new Date().toISOString();
+    this.data.consentRecords.push({
+      id: 'cns_' + crypto.randomUUID().slice(0, 8),
+      userId,
+      scope: `employment_verification:${id}`,
+      grantedAt: new Date().toISOString(),
+      ipAddress: ip,
+      userAgent: ua,
+    });
+    this.persist();
+    void this.saveNow();
+    return ev;
+  }
+  withdrawEmploymentConsent(id: string, userId: string): EmploymentVerification | undefined {
+    const ev = this.data.employmentVerifications.find(v => v.id === id && v.userId === userId);
+    if (!ev) return undefined;
+    ev.consentWithdrawnAt = new Date().toISOString();
+    ev.status = 'rejected';
+    ev.notes = (ev.notes ? ev.notes + '; ' : '') + 'Consent withdrawn by candidate.';
+    ev.updatedAt = new Date().toISOString();
+    const rec = this.data.consentRecords.find(c => c.userId === userId && c.scope === `employment_verification:${id}` && !c.withdrawnAt);
+    if (rec) rec.withdrawnAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return ev;
+  }
+  updateEmploymentVerification(id: string, actorUserId: string, updates: Partial<EmploymentVerification>): EmploymentVerification | undefined {
+    const ev = this.data.employmentVerifications.find(v => v.id === id);
+    if (!ev) return undefined;
+    if (updates.status) ev.status = updates.status;
+    if (updates.method) ev.method = updates.method;
+    if (updates.verifiedAt !== undefined) ev.verifiedAt = updates.verifiedAt;
+    if (updates.verifiedBy !== undefined) ev.verifiedBy = updates.verifiedBy;
+    if (updates.expiresAt !== undefined) ev.expiresAt = updates.expiresAt;
+    if (updates.notes !== undefined) ev.notes = updates.notes;
+    if (updates.corporateEmail !== undefined) ev.corporateEmail = updates.corporateEmail;
+    ev.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return ev;
+  }
+  attachEmploymentDocument(evId: string, userId: string, docId: string): EmploymentVerification | undefined {
+    const ev = this.data.employmentVerifications.find(v => v.id === evId && v.userId === userId);
+    if (!ev) return undefined;
+    if (!ev.documents.includes(docId)) ev.documents.push(docId);
+    ev.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return ev;
+  }
+
+  // Employment verification corporate email OTP
+  sendEmploymentEmailOtp(evId: string, userId: string): { code: string; expiresAt: string; email: string } | undefined {
+    const ev = this.data.employmentVerifications.find(v => v.id === evId && v.userId === userId);
+    if (!ev || !ev.corporateEmail) return undefined;
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    void this.setSystemSecret(`ev_otp_${evId}`, JSON.stringify({ code, expiresAt, email: ev.corporateEmail }));
+    return { code, expiresAt, email: ev.corporateEmail };
+  }
+  confirmEmploymentEmailOtp(evId: string, userId: string, code: string): boolean {
+    const ev = this.data.employmentVerifications.find(v => v.id === evId && v.userId === userId);
+    if (!ev) return false;
+    const raw = this.getSystemSecret(`ev_otp_${evId}`);
+    if (!raw) return false;
+    let pending: { code: string; expiresAt: string; email: string };
+    try { pending = JSON.parse(raw); } catch { return false; }
+    if (new Date(pending.expiresAt).getTime() < Date.now()) return false;
+    if (pending.code !== String(code).trim()) return false;
+    void this.setSystemSecret(`ev_otp_${evId}`, '');
+    return true;
+  }
+
+  // Background verification
+  getBgvRequests(userId: string, all = false): BackgroundVerificationRequest[] {
+    const list = all ? this.data.backgroundVerificationRequests : this.data.backgroundVerificationRequests.filter(v => v.userId === userId);
+    return list.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+  createBgvRequest(userId: string, checks?: BgvCheckType[]): BackgroundVerificationRequest {
+    const types: BgvCheckType[] = checks && checks.length ? checks : ['identity','employment_history','education','address','reference'];
+    const req: BackgroundVerificationRequest = {
+      id: 'bgv_' + crypto.randomUUID().slice(0, 8),
+      userId,
+      checks: types.map(t => ({ type: t, status: 'not_started' })),
+      status: 'pending_consent',
+      documents: [],
+      provider: 'sandbox_mock',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.data.backgroundVerificationRequests.unshift(req);
+    this.persist();
+    void this.saveNow();
+    return req;
+  }
+  getBgvRequestById(id: string): BackgroundVerificationRequest | undefined {
+    return this.data.backgroundVerificationRequests.find(v => v.id === id);
+  }
+  grantBgvConsent(id: string, userId: string, ip?: string, ua?: string): BackgroundVerificationRequest | undefined {
+    const r = this.data.backgroundVerificationRequests.find(v => v.id === id && v.userId === userId);
+    if (!r) return undefined;
+    r.consentGivenAt = new Date().toISOString();
+    r.status = 'submitted';
+    r.updatedAt = new Date().toISOString();
+    this.data.consentRecords.push({
+      id: 'cns_' + crypto.randomUUID().slice(0, 8),
+      userId,
+      scope: `bgv:${id}`,
+      grantedAt: new Date().toISOString(),
+      ipAddress: ip,
+      userAgent: ua,
+    });
+    this.persist();
+    void this.saveNow();
+    return r;
+  }
+  withdrawBgvConsent(id: string, userId: string): BackgroundVerificationRequest | undefined {
+    const r = this.data.backgroundVerificationRequests.find(v => v.id === id && v.userId === userId);
+    if (!r) return undefined;
+    r.consentWithdrawnAt = new Date().toISOString();
+    r.status = 'withdrawn';
+    r.updatedAt = new Date().toISOString();
+    const rec = this.data.consentRecords.find(c => c.userId === userId && c.scope === `bgv:${id}` && !c.withdrawnAt);
+    if (rec) rec.withdrawnAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return r;
+  }
+  updateBgvCheck(requestId: string, checkType: BgvCheckType, status: BgvCheckStatus, result?: string): BackgroundVerificationRequest | undefined {
+    const r = this.data.backgroundVerificationRequests.find(v => v.id === requestId);
+    if (!r) return undefined;
+    const check = r.checks.find(c => c.type === checkType);
+    if (check) {
+      check.status = status;
+      check.result = result;
+      check.updatedAt = new Date().toISOString();
+    }
+    // update overall status
+    const allDone = r.checks.every(c => c.status === 'verified' || c.status === 'skipped' || c.status === 'failed');
+    if (allDone) {
+      const anyFailed = r.checks.some(c => c.status === 'failed');
+      r.status = anyFailed ? 'rejected' : 'completed';
+    } else {
+      r.status = 'under_review';
+    }
+    r.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return r;
+  }
+  attachBgvDocument(reqId: string, userId: string, docId: string): BackgroundVerificationRequest | undefined {
+    const r = this.data.backgroundVerificationRequests.find(v => v.id === reqId && v.userId === userId);
+    if (!r) return undefined;
+    if (!r.documents.includes(docId)) r.documents.push(docId);
+    r.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return r;
+  }
+
+  // Documents (opaque storage)
+  createVerificationDocument(ownerUserId: string, kind: VerificationDocumentKind, mimeType: string, size: number, contentBase64?: string): VerificationDocument {
+    const doc: VerificationDocument = {
+      id: 'vdoc_' + crypto.randomUUID().slice(0, 8),
+      ownerUserId,
+      kind,
+      storagePath: 'opaque://' + crypto.randomUUID(),
+      mimeType,
+      size,
+      uploadedAt: new Date().toISOString(),
+    };
+    // store content in a system secret keyed by doc id (dev-only opaque store)
+    if (contentBase64) void this.setSystemSecret(`vdoc_content_${doc.id}`, contentBase64);
+    this.data.verificationDocuments.unshift(doc);
+    this.persist();
+    void this.saveNow();
+    return doc;
+  }
+  getVerificationDocument(id: string): VerificationDocument | undefined {
+    return this.data.verificationDocuments.find(d => d.id === id);
+  }
+  getVerificationDocumentContent(id: string): string | undefined {
+    return this.getSystemSecret(`vdoc_content_${id}`);
+  }
+  deleteVerificationDocument(id: string, userId: string): boolean {
+    const idx = this.data.verificationDocuments.findIndex(d => d.id === id && d.ownerUserId === userId);
+    if (idx === -1) return false;
+    this.data.verificationDocuments.splice(idx, 1);
+    void this.setSystemSecret(`vdoc_content_${id}`, '');
+    this.persist();
+    void this.saveNow();
+    return true;
+  }
+
+  // Consent records
+  getConsentRecords(userId: string): ConsentRecord[] {
+    return this.data.consentRecords.filter(c => c.userId === userId);
+  }
+
+  // ---------- Resume access consent (Milestone 6) ----------
+  grantResumeAccess(candidateUserId: string, requesterUserId: string, ip?: string, ua?: string): ConsentRecord {
+    const scope = `resume_access:${candidateUserId}:${requesterUserId}`;
+    let rec = this.data.consentRecords.find(c => c.userId === candidateUserId && c.scope === scope && !c.withdrawnAt);
+    if (!rec) {
+      rec = {
+        id: 'cns_' + crypto.randomUUID().slice(0, 8),
+        userId: candidateUserId,
+        scope,
+        grantedAt: new Date().toISOString(),
+        ipAddress: ip,
+        userAgent: ua,
+      };
+      this.data.consentRecords.push(rec);
+      this.persist();
+      void this.saveNow();
+    }
+    return rec;
+  }
+  withdrawResumeAccess(candidateUserId: string, requesterUserId: string): boolean {
+    const scope = `resume_access:${candidateUserId}:${requesterUserId}`;
+    const rec = this.data.consentRecords.find(c => c.userId === candidateUserId && c.scope === scope && !c.withdrawnAt);
+    if (!rec) return false;
+    rec.withdrawnAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return true;
+  }
+  hasResumeAccess(candidateUserId: string, requesterUserId: string): boolean {
+    const scope = `resume_access:${candidateUserId}:${requesterUserId}`;
+    const rec = this.data.consentRecords.find(c => c.userId === candidateUserId && c.scope === scope);
+    return !!rec && !rec.withdrawnAt;
+  }
+  getLatestResume(candidateUserId: string): ResumeDocument | undefined {
+    return this.data.resumes.filter(r => r.userId === candidateUserId).sort((a,b)=>new Date(b.uploadedAt).getTime()-new Date(a.uploadedAt).getTime())[0];
+  }
+
+  // ---------- Referral jobs ----------
+
+  getReferralJobs(filter?: { status?: string; company?: string; mine?: string }): ReferralJob[] {
+    const now = Date.now();
+    let jobs = [...this.data.referralJobs];
+    // expire stale
+    jobs = jobs.map(j => {
+      if (j.status === 'published' || j.status === 'active') {
+        if (j.expiresAt && new Date(j.expiresAt).getTime() < now) {
+          return { ...j, status: 'expired' as const };
+        }
+      }
+      return j;
+    });
+    // persist expired changes
+    // (best-effort; update in place)
+    for (const j of jobs) {
+      const orig = this.data.referralJobs.find(x => x.id === j.id);
+      if (orig && orig.status !== j.status) Object.assign(orig, { status: j.status });
+    }
+    if (filter?.mine) {
+      jobs = jobs.filter(j => j.postedByUserId === filter.mine);
+    } else {
+      jobs = jobs.filter(j => j.status === 'published' || j.status === 'active');
+      jobs = jobs.filter(j => j.moderationStatus !== 'removed');
+    }
+    if (filter?.status) jobs = jobs.filter(j => j.status === filter.status);
+    if (filter?.company) {
+      const q = filter.company.toLowerCase();
+      jobs = jobs.filter(j => j.company.toLowerCase().includes(q));
+    }
+    return jobs.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  getReferralJobById(id: string): ReferralJob | undefined {
+    return this.data.referralJobs.find(j => j.id === id);
+  }
+
+  createReferralJob(postedByUserId: string, payload: Partial<ReferralJob>): ReferralJob {
+    const job: ReferralJob = {
+      id: 'rjob_' + crypto.randomUUID().slice(0, 8),
+      postedByUserId,
+      company: payload.company || '',
+      title: payload.title || '',
+      requisitionId: payload.requisitionId || '',
+      description: payload.description || '',
+      skillsRequired: Array.isArray(payload.skillsRequired) ? payload.skillsRequired : [],
+      minExperience: typeof payload.minExperience === 'number' ? payload.minExperience : 0,
+      maxExperience: typeof payload.maxExperience === 'number' ? payload.maxExperience : 0,
+      location: payload.location || '',
+      workMode: (payload.workMode as any) || 'Remote',
+      employmentType: (payload.employmentType as any) || 'Full-time',
+      jobUrl: payload.jobUrl || '',
+      referralProvider: payload.referralProvider || '',
+      availableSlots: typeof payload.availableSlots === 'number' ? payload.availableSlots : 1,
+      filledSlots: 0,
+      expiresAt: payload.expiresAt || new Date(Date.now() + 30*24*60*60*1000).toISOString(),
+      instructions: payload.instructions || '',
+      status: 'draft',
+      moderationStatus: 'clean',
+      reports: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.data.referralJobs.unshift(job);
+    this.persist();
+    void this.saveNow();
+    return job;
+  }
+
+  updateReferralJob(userId: string, jobId: string, updates: Partial<ReferralJob>): ReferralJob | undefined {
+    const job = this.data.referralJobs.find(j => j.id === jobId && j.postedByUserId === userId);
+    if (!job) return undefined;
+    const allowed = ['company','title','requisitionId','description','skillsRequired','minExperience','maxExperience','location','workMode','employmentType','jobUrl','referralProvider','availableSlots','expiresAt','instructions','status'];
+    for (const k of allowed) {
+      if (Object.prototype.hasOwnProperty.call(updates, k)) (job as any)[k] = (updates as any)[k];
+    }
+    job.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return job;
+  }
+
+  publishReferralJob(userId: string, jobId: string): ReferralJob | undefined {
+    const job = this.data.referralJobs.find(j => j.id === jobId && j.postedByUserId === userId);
+    if (!job) return undefined;
+    job.status = 'published';
+    job.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return job;
+  }
+
+  closeReferralJob(userId: string, jobId: string): ReferralJob | undefined {
+    const job = this.data.referralJobs.find(j => j.id === jobId && j.postedByUserId === userId);
+    if (!job) return undefined;
+    job.status = 'closed';
+    job.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return job;
+  }
+
+  reportReferralJob(jobId: string, byUserId: string, reason: string): ReferralJob | undefined {
+    const job = this.data.referralJobs.find(j => j.id === jobId);
+    if (!job) return undefined;
+    job.reports.push({ byUserId, reason, createdAt: new Date().toISOString() });
+    job.moderationStatus = 'reported';
+    job.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return job;
+  }
+
+  moderateReferralJob(jobId: string, status: 'clean' | 'removed'): ReferralJob | undefined {
+    const job = this.data.referralJobs.find(j => j.id === jobId);
+    if (!job) return undefined;
+    job.moderationStatus = status;
+    if (status === 'removed') job.status = 'closed';
+    job.updatedAt = new Date().toISOString();
+    this.persist();
+    void this.saveNow();
+    return job;
+  }
+
+  // ---------- Referral requests ----------
+  getReferralRequestsByCandidate(userId: string): ReferralRequest[] {
+    return this.data.referralRequests.filter(r => r.candidateUserId === userId).sort((a,b)=>new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime());
+  }
+
+  getReferralRequestsByEmployee(userId: string): ReferralRequest[] {
+    const jobIds = new Set(this.data.referralJobs.filter(j=>j.postedByUserId===userId).map(j=>j.id));
+    return this.data.referralRequests.filter(r => jobIds.has(r.referralJobId) || r.employeeUserId === userId).sort((a,b)=>new Date(b.createdAt).getTime()-new Date(a.createdAt).getTime());
+  }
+
+  getReferralRequestById(id: string): ReferralRequest | undefined {
+    return this.data.referralRequests.find(r => r.id === id);
+  }
+
+  getReferralStatusHistory(requestId: string): ReferralStatusEvent[] {
+    return this.data.referralStatusHistory.filter(e => e.requestId === requestId).sort((a,b)=>new Date(a.createdAt).getTime()-new Date(b.createdAt).getTime());
+  }
+
+  createReferralRequest(candidateUserId: string, referralJobId: string, payload: { resumeId?: string; coverNote?: string }): { ok: boolean; error?: string; request?: ReferralRequest } {
+    const job = this.data.referralJobs.find(j => j.id === referralJobId);
+    if (!job) return { ok: false, error: 'Referral job not found' };
+    if (job.status !== 'published' && job.status !== 'active') return { ok: false, error: 'Referral job is not open' };
+    if (job.filledSlots >= job.availableSlots) return { ok: false, error: 'No referral slots available' };
+    // duplicate prevention
+    const dup = this.data.referralRequests.find(r => r.candidateUserId === candidateUserId && r.referralJobId === referralJobId);
+    if (dup) return { ok: false, error: 'Duplicate referral request' };
+
+    // AI/explainable match score (deterministic, from real profile data)
+    const candidateProfile = this.data.candidateReferralProfiles.find(p => p.userId === candidateUserId);
+    const candidateSkills = new Set((candidateProfile?.skills || []).map(s=>s.toLowerCase()));
+    const resume = this.data.resumes.find(r => r.userId === candidateUserId);
+    if (resume?.parsedProfile?.skills) resume.parsedProfile.skills.forEach(s=>candidateSkills.add(s.toLowerCase()));
+    const jobReqs = extractJobRequirements(job);
+    const matchResult = scoreCandidate({
+      skills: [...candidateSkills],
+      experienceYears: candidateProfile?.experienceYears || 0,
+      preferredLocations: candidateProfile?.preferredLocations,
+    }, jobReqs);
+    const matching = (job.skillsRequired || []).filter(s => matchResult.matchingSkills.includes(s.toLowerCase()));
+    const missing = (job.skillsRequired || []).filter(s => matchResult.missingSkills.includes(s.toLowerCase()));
+    const matchScore = matchResult.matchScore;
+
+    const reqObj: ReferralRequest = {
+      id: 'rreq_' + crypto.randomUUID().slice(0, 8),
+      candidateUserId,
+      referralJobId,
+      employeeUserId: job.postedByUserId,
+      status: 'requested',
+      matchScore,
+      matchingSkills: matching,
+      missingSkills: missing,
+      resumeId: payload.resumeId,
+      coverNote: payload.coverNote,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.data.referralRequests.unshift(reqObj);
+    this.data.referralStatusHistory.push({
+      id: 'rse_' + crypto.randomUUID().slice(0, 8),
+      requestId: reqObj.id,
+      toStatus: 'requested',
+      actorUserId: candidateUserId,
+      createdAt: new Date().toISOString(),
+    });
+    this.persist();
+    void this.saveNow();
+    return { ok: true, request: reqObj };
+  }
+
+  updateReferralRequestStatus(requestId: string, actorUserId: string, newStatus: ReferralRequestStatus, note?: string): { ok: boolean; error?: string; request?: ReferralRequest } {
+    const reqObj = this.data.referralRequests.find(r => r.id === requestId);
+    if (!reqObj) return { ok: false, error: 'Request not found' };
+    const job = this.data.referralJobs.find(j => j.id === reqObj.referralJobId);
+    const isEmployeeOwner = job?.postedByUserId === actorUserId || reqObj.employeeUserId === actorUserId;
+    const isCandidate = reqObj.candidateUserId === actorUserId;
+    if (!isEmployeeOwner && !isCandidate) return { ok: false, error: 'Forbidden' };
+    // candidate can only withdraw
+    if (isCandidate && !isEmployeeOwner && newStatus !== 'withdrawn') return { ok: false, error: 'Forbidden' };
+    const allowedTransitions: Record<string, ReferralRequestStatus[]> = {
+      requested: ['under_review','shortlisted','accepted','rejected','withdrawn'],
+      under_review: ['shortlisted','accepted','rejected','withdrawn'],
+      shortlisted: ['accepted','rejected','referral_submitted','withdrawn'],
+      accepted: ['referral_submitted','interview_scheduled','rejected','withdrawn'],
+      referral_submitted: ['interview_scheduled','selected','rejected'],
+      interview_scheduled: ['selected','rejected'],
+    };
+    if (!allowedTransitions[reqObj.status]?.includes(newStatus)) return { ok: false, error: `Invalid transition ${reqObj.status} -> ${newStatus}` };
+    const from = reqObj.status;
+    reqObj.status = newStatus;
+    reqObj.updatedAt = new Date().toISOString();
+    this.data.referralStatusHistory.push({
+      id: 'rse_' + crypto.randomUUID().slice(0, 8),
+      requestId,
+      fromStatus: from,
+      toStatus: newStatus,
+      actorUserId,
+      note,
+      createdAt: new Date().toISOString(),
+    });
+    if (newStatus === 'accepted' || newStatus === 'referral_submitted') {
+      if (job && job.filledSlots < job.availableSlots) {
+        job.filledSlots += 1;
+        if (job.filledSlots >= job.availableSlots) job.status = 'filled';
+      }
+    }
+    this.persist();
+    void this.saveNow();
+    return { ok: true, request: reqObj };
+  }
+
+  // ---------- Notifications ----------
+  createNotification(userId: string, type: string, title: string, body: string, link?: string): Notification {
+    const n: Notification = {
+      id: 'ntf_' + crypto.randomUUID().slice(0, 8),
+      userId,
+      type,
+      title,
+      body,
+      link,
+      read: false,
+      createdAt: new Date().toISOString(),
+    };
+    this.data.notifications.unshift(n);
+    this.persist();
+    void this.saveNow();
+    // Optional email delivery (configurable, off by default)
+    if (emailNotificationsEnabled()) {
+      const user = this.data.users.find(u => u.id === userId);
+      if (user) void sendEmail(user.email, title, body);
+    }
+    return n;
+  }
+
+  getNotifications(userId: string): Notification[] {
+    return this.data.notifications.filter(n => n.userId === userId).slice(0, 100);
+  }
+
+  markNotificationRead(userId: string, id: string): boolean {
+    const n = this.data.notifications.find(x => x.id === id && x.userId === userId);
+    if (!n) return false;
+    n.read = true;
+    this.persist();
+    void this.saveNow();
+    return true;
+  }
+
+  markAllNotificationsRead(userId: string): void {
+    this.data.notifications.filter(n => n.userId === userId).forEach(n => n.read = true);
+    this.persist();
+    void this.saveNow();
+  }
+
+  // ---------- Candidate shortlists ----------
+  createShortlist(employeeUserId: string, candidateUserId: string, note?: string): CandidateShortlist {
+    const existing = this.data.candidateShortlists.find(s => s.employeeUserId === employeeUserId && s.candidateUserId === candidateUserId);
+    if (existing) return existing;
+    const s: CandidateShortlist = {
+      id: 'shl_' + crypto.randomUUID().slice(0, 8),
+      employeeUserId,
+      candidateUserId,
+      note,
+      createdAt: new Date().toISOString(),
+    };
+    this.data.candidateShortlists.unshift(s);
+    this.persist();
+    void this.saveNow();
+    return s;
+  }
+
+  getShortlists(employeeUserId: string): CandidateShortlist[] {
+    return this.data.candidateShortlists.filter(s => s.employeeUserId === employeeUserId);
+  }
+
+  deleteShortlist(employeeUserId: string, id: string): boolean {
+    const idx = this.data.candidateShortlists.findIndex(s => s.id === id && s.employeeUserId === employeeUserId);
+    if (idx === -1) return false;
+    this.data.candidateShortlists.splice(idx, 1);
+    this.persist();
+    void this.saveNow();
+    return true;
+  }
+
+  // ---------- Anonymous candidate search ----------
+  searchCandidateProfiles(actor: { id: string; role: string; capabilities: string[] }, filters: { skills?: string[]; location?: string; minExperience?: number; jobId?: string }): any[] {
+    const isRecruiter = actor.role === 'recruiter' || actor.role === 'admin' || (actor.capabilities || []).includes('can_recruit');
+    const isEmployee = actor.role === 'employee' || actor.role === 'admin' || (actor.capabilities || []).includes('can_refer');
+    const job = filters.jobId ? this.data.referralJobs.find(j => j.id === filters.jobId) : undefined;
+    const results: any[] = [];
+    for (const prof of this.data.candidateReferralProfiles) {
+      if (!prof.referralOptIn && !prof.submittedForReferral) continue;
+      // visibility gating
+      let visible = false;
+      if (prof.visibility === 'anonymous') visible = true;
+      else if (prof.visibility === 'verified_employees' && isEmployee) visible = true;
+      else if (prof.visibility === 'recruiters' && isRecruiter) visible = true;
+      else if (prof.visibility === 'private') visible = false;
+      if (!visible) continue;
+      // filters
+      if (filters.skills && filters.skills.length) {
+        const pSkills = new Set(prof.skills.map(s=>s.toLowerCase()));
+        if (!filters.skills.some(s => pSkills.has(s.toLowerCase()))) continue;
+      }
+      if (filters.location) {
+        const q = filters.location.toLowerCase();
+        if (!prof.preferredLocations.some(l => l.toLowerCase().includes(q)) && !prof.currentEmployer.toLowerCase().includes(q)) continue;
+      }
+      if (typeof filters.minExperience === 'number' && prof.experienceYears < filters.minExperience) continue;
+
+      const isAnonymous = prof.visibility === 'anonymous' || (!isRecruiter && prof.visibility === 'recruiters' && !isEmployee);
+      // Actually anonymous view if visibility anonymous
+      const anonymous = prof.visibility === 'anonymous';
+
+      // compute match if job
+      let matchScore: number | undefined;
+      let matchingSkills: string[] = [];
+      let missingSkills: string[] = [];
+      let matchSummary: string | undefined;
+      if (job) {
+        const result = scoreCandidate({
+          skills: prof.skills,
+          experienceYears: prof.experienceYears,
+          preferredLocations: prof.preferredLocations,
+        }, extractJobRequirements(job));
+        matchingSkills = (job.skillsRequired || []).filter(s => result.matchingSkills.includes(s.toLowerCase()));
+        missingSkills = (job.skillsRequired || []).filter(s => result.missingSkills.includes(s.toLowerCase()));
+        matchScore = result.matchScore;
+        matchSummary = result.summary;
+      }
+
+      const candidateUser = this.data.users.find(u => u.id === prof.userId);
+      const item: any = {
+        profileId: prof.id,
+        userId: prof.userId,
+        visibility: prof.visibility,
+        anonymous,
+        experienceRange: anonymous ? `${Math.max(0, prof.experienceYears-2)}-${prof.experienceYears+2} years` : `${prof.experienceYears} years`,
+        skills: prof.skills,
+        preferredTitles: prof.preferredTitles,
+        preferredLocations: prof.preferredLocations,
+        verificationBadges: [],
+        matchScore,
+        matchingSkills,
+        missingSkills,
+        matchSummary,
+      };
+      if (!anonymous) {
+        item.name = candidateUser?.name;
+        item.currentEmployer = prof.currentEmployer;
+        item.noticePeriodDays = prof.noticePeriodDays;
+      }
+      results.push(item);
+    }
+    return results.sort((a,b) => (b.matchScore || 0) - (a.matchScore || 0));
   }
 
   // Resumes

@@ -4,8 +4,10 @@ export interface User {
   name: string;
   passwordHash: string;
   salt: string;
-  role: 'candidate' | 'admin';
+  role: 'candidate' | 'employee' | 'recruiter' | 'admin' | 'verifier';
+  capabilities: string[];
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface AdminTenantSummary {
@@ -230,7 +232,7 @@ export interface SystemAuditLog {
   id: string;
   userId: string;
   timestamp: string;
-  category: 'discovery' | 'filtering' | 'autofill' | 'review' | 'submission' | 'status_sync' | 'security';
+  category: 'discovery' | 'filtering' | 'autofill' | 'review' | 'submission' | 'status_sync' | 'security' | 'profile' | 'referral' | 'verification' | 'privacy' | 'moderation';
   action: string;
   details: string;
   severity: 'info' | 'warn' | 'success' | 'alert';
@@ -347,4 +349,211 @@ export interface DiscoveryRunHandle {
   cooldownSeconds?: number;
   cached: boolean;
   result?: DiscoveryJobResult;
+}
+// ---------- ApplyMatica referral marketplace (Milestone 1) ----------
+
+export type CandidateVisibility = 'private' | 'anonymous' | 'verified_employees' | 'recruiters';
+
+export interface CandidateReferralProfile {
+  id: string;
+  userId: string;
+  currentEmployer: string;
+  previousEmployers: string[];
+  preferredCompanies: string[];
+  preferredTitles: string[];
+  preferredLocations: string[];
+  noticePeriodDays: number;
+  availabilityDate: string; // ISO
+  skills: string[];
+  experienceYears: number;
+  educationSummary: string;
+  employmentHistory: WorkExperience[];
+  visibility: CandidateVisibility;
+  referralOptIn: boolean;
+  submittedForReferral: boolean;
+  profileCompleteness: number; // 0-100
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface EmployeeProfile {
+  id: string;
+  userId: string;
+  corporateEmail: string;
+  company: string;
+  title: string;
+  department: string;
+  emailVerified: boolean;
+  emailVerifiedAt?: string;
+  affiliationStatus: 'unverified' | 'pending' | 'verified' | 'rejected';
+  affiliationEvidence: string[]; // verification document ids
+  headline: string;
+  summary: string;
+  linkedinUrl: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CompanyProfile {
+  id: string;
+  name: string;
+  domain: string;
+  verified: boolean;
+  createdAt: string;
+}
+// ---------- ApplyMatica referral marketplace (Milestone 2) ----------
+
+export type ReferralJobStatus = 'draft' | 'published' | 'active' | 'filled' | 'expired' | 'closed';
+export type ReferralJobModerationStatus = 'clean' | 'reported' | 'removed';
+export type ReferralJobWorkMode = 'Remote' | 'Hybrid' | 'Onsite';
+export type ReferralJobEmploymentType = 'Full-time' | 'Contract' | 'Part-time' | 'Internship';
+
+export interface ReferralJob {
+  id: string;
+  postedByUserId: string;
+  company: string;
+  title: string;
+  requisitionId: string;
+  description: string;
+  skillsRequired: string[];
+  minExperience: number;
+  maxExperience: number;
+  location: string;
+  workMode: ReferralJobWorkMode;
+  employmentType: ReferralJobEmploymentType;
+  jobUrl: string;
+  referralProvider: string;
+  availableSlots: number;
+  filledSlots: number;
+  expiresAt: string;
+  instructions: string;
+  status: ReferralJobStatus;
+  moderationStatus: ReferralJobModerationStatus;
+  reports: { byUserId: string; reason: string; createdAt: string }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReferralRequestStatus =
+  'requested' | 'under_review' | 'shortlisted' | 'accepted' |
+  'referral_submitted' | 'interview_scheduled' | 'selected' |
+  'rejected' | 'withdrawn';
+
+export interface ReferralRequest {
+  id: string;
+  candidateUserId: string;
+  referralJobId: string;
+  employeeUserId: string;
+  status: ReferralRequestStatus;
+  matchScore: number;
+  matchingSkills: string[];
+  missingSkills: string[];
+  resumeId?: string;
+  coverNote?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReferralStatusEvent {
+  id: string;
+  requestId: string;
+  fromStatus?: ReferralRequestStatus;
+  toStatus: ReferralRequestStatus;
+  actorUserId: string;
+  note?: string;
+  createdAt: string;
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  type: string;
+  title: string;
+  body: string;
+  link?: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface CandidateShortlist {
+  id: string;
+  employeeUserId: string;
+  candidateUserId: string;
+  note?: string;
+  createdAt: string;
+}
+// ---------- ApplyMatica verification (Milestone 3) ----------
+
+export type EmploymentVerificationStatus = 'not_started' | 'pending_consent' | 'submitted' | 'under_review' | 'verified' | 'rejected' | 'expired';
+export type EmploymentVerificationMethod = 'email_otp' | 'document_review' | 'hr_verification' | 'third_party';
+
+export interface EmploymentVerification {
+  id: string;
+  userId: string;
+  employer: string;
+  designation: string;
+  startDate: string;
+  endDate?: string;
+  isCurrent: boolean;
+  corporateEmail: string;
+  status: EmploymentVerificationStatus;
+  method: EmploymentVerificationMethod;
+  consentGivenAt?: string;
+  consentWithdrawnAt?: string;
+  documents: string[];
+  verifiedAt?: string;
+  verifiedBy?: string;
+  expiresAt?: string;
+  notes?: string;
+  provider?: 'sandbox_mock';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BgvCheckType = 'identity' | 'employment_history' | 'education' | 'address' | 'reference';
+export type BgvCheckStatus = 'not_started' | 'pending' | 'verified' | 'failed' | 'skipped';
+export interface BgvCheck {
+  type: BgvCheckType;
+  status: BgvCheckStatus;
+  result?: string;
+  updatedAt?: string;
+}
+export type BgvStatus = 'not_started' | 'pending_consent' | 'submitted' | 'under_review' | 'completed' | 'rejected' | 'withdrawn';
+
+export interface BackgroundVerificationRequest {
+  id: string;
+  userId: string;
+  checks: BgvCheck[];
+  status: BgvStatus;
+  consentGivenAt?: string;
+  consentWithdrawnAt?: string;
+  documents: string[];
+  provider: 'sandbox_mock';
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type VerificationDocumentKind = 'employment_proof' | 'identity' | 'education' | 'address' | 'reference' | 'other';
+
+export interface VerificationDocument {
+  id: string;
+  ownerUserId: string;
+  kind: VerificationDocumentKind;
+  storagePath: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string;
+  expiresAt?: string;
+}
+
+export interface ConsentRecord {
+  id: string;
+  userId: string;
+  scope: string;
+  grantedAt: string;
+  withdrawnAt?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  metadata?: Record<string, any>;
 }

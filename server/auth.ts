@@ -119,3 +119,33 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   req.user = user;
   next();
 }
+// ---------- Role / capability guards (Milestone 1) ----------
+
+export function hasCapability(user: User | undefined, capability: string): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return Array.isArray(user.capabilities) && user.capabilities.includes(capability);
+}
+
+export function isEmployee(user: User | undefined): boolean {
+  if (!user) return false;
+  return user.role === 'employee' || user.role === 'admin' || hasCapability(user, 'can_refer');
+}
+
+export function isVerifiedEmployee(user: User | undefined): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  if (!isEmployee(user)) return false;
+  const profile = db.getEmployeeProfile(user.id);
+  return !!profile && profile.emailVerified && profile.affiliationStatus === 'verified';
+}
+
+export function isRecruiter(user: User | undefined): boolean {
+  if (!user) return false;
+  return user.role === 'recruiter' || user.role === 'admin' || hasCapability(user, 'can_recruit');
+}
+
+export function isVerifier(user: User | undefined): boolean {
+  if (!user) return false;
+  return user.role === 'verifier' || user.role === 'admin' || hasCapability(user, 'can_verify');
+}

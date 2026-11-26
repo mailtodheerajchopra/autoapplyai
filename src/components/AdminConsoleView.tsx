@@ -32,6 +32,7 @@ import { api } from '../api';
 import { useAuth } from '../context/AuthContext';
 import { AdminTenantSummary, AdminPlatformStats, SystemAuditLog, SystemKeyInfo } from '../types';
 import { RelevanceAuditHub } from './RelevanceAuditHub';
+import { AdminAnalyticsView } from './AdminAnalyticsView';
 import { DocsDeploymentView } from './DocsDeploymentView';
 
 interface AdminConsoleViewProps {
@@ -40,7 +41,7 @@ interface AdminConsoleViewProps {
 
 export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTenant }) => {
   const { user } = useAuth();
-  const [activeAdminSubTab, setActiveAdminSubTab] = useState<'tenants' | 'audit' | 'safeguards' | 'relevance' | 'deployment' | 'keys'>('tenants');
+  const [activeAdminSubTab, setActiveAdminSubTab] = useState<'tenants' | 'audit' | 'safeguards' | 'relevance' | 'deployment' | 'keys' | 'analytics'>('tenants');
   const [tenants, setTenants] = useState<AdminTenantSummary[]>([]);
   const [deletingTenantId, setDeletingTenantId] = useState<string | null>(null);
   const [stats, setStats] = useState<AdminPlatformStats | null>(null);
@@ -400,6 +401,18 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
         >
           <KeyRound className="w-4 h-4 text-amber-400" />
           <span>Key Vault & Vercel Secrets ({systemKeys.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveAdminSubTab('analytics')}
+          className={`px-4 py-2.5 text-xs font-semibold rounded-t-lg transition-colors whitespace-nowrap flex items-center gap-2 ${
+            activeAdminSubTab === 'analytics'
+              ? 'bg-slate-900 text-white border-t-2 border-indigo-500 border-x border-slate-800'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <Sparkles className="w-4 h-4 text-emerald-400" />
+          <span>Referral Analytics</span>
         </button>
       </div>
 
@@ -947,6 +960,10 @@ export const AdminConsoleView: React.FC<AdminConsoleViewProps> = ({ onSwitchToTe
             </div>
           )}
         </div>
+      )}
+
+      {activeAdminSubTab === 'analytics' && (
+        <AdminAnalyticsView />
       )}
     </div>
   );

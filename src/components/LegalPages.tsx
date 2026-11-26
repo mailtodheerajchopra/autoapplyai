@@ -75,6 +75,9 @@ export const PrivacyPolicy: React.FC = () => (
     <Section h="7. Your choices">
       <p>You may use the Service with email/password instead of Google sign-in, decline to store Workday credentials, and export or correct your parsed profile from the Profile page at any time.</p>
     </Section>
+    <Section h="8. Data protection (DPDP Act & consent)">
+      <p>We collect and process personal data only for stated purposes (job discovery, referral marketplace, verification) with free, specific, informed and unambiguous consent. Consent can be withdrawn at any time from the relevant verification or profile screen, and withdrawal is recorded in our consent ledger. We do not contact your current employer without explicit documented authorization, and we never disclose job-seeking activity to your current employer. Sensitive documents (payslips, identity proofs, employment proofs) are encrypted at rest, access-controlled, and served only via short-lived signed URLs to authorized reviewers. You have the right to access, correct and erase your data; account deletion removes all associated records. Grievance officer: <span className="text-slate-100">mailto.dheerajchopra@gmail.com</span>.</p>
+    </Section>
   </LegalShell>
 );
 

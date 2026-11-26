@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../api';
 import { ChangePasswordModal } from './ChangePasswordModal';
-import { Briefcase, UserCheck, ShieldCheck, ChevronDown, LogOut, RefreshCw, Shield, Sparkles, User, ExternalLink, KeyRound } from 'lucide-react';
+import { Briefcase, UserCheck, ShieldCheck, ChevronDown, LogOut, RefreshCw, Shield, Sparkles, User, ExternalLink, KeyRound, Bell } from 'lucide-react';
 
 interface TopNavProps {
   activeTab: string;
@@ -23,6 +24,22 @@ export const TopNav: React.FC<TopNavProps> = ({
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [showSandboxPersonas, setShowSandboxPersonas] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    const load = async () => {
+      try {
+        const list = await api.getNotifications();
+        setUnreadCount(list.filter((n: any) => !n.read).length);
+      } catch {
+        setUnreadCount(0);
+      }
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [user]);
 
   const candidateNavItems = [
     { id: 'jobs', label: 'Discovered Jobs' },
@@ -32,6 +49,20 @@ export const TopNav: React.FC<TopNavProps> = ({
     },
     { id: 'tracker', label: 'Tracked Applications' },
     { id: 'profile', label: 'My Resume & Profile' },
+    { id: 'referral-profile', label: 'Referral Profile' },
+    { id: 'employee-profile', label: 'Employee Profile' },
+    { id: 'referral-marketplace', label: 'Referral Marketplace' },
+    { id: 'my-referrals', label: 'My Referrals' },
+    { id: 'post-referral-job', label: 'Post Referral Job' },
+    { id: 'my-referral-jobs', label: 'My Referral Jobs' },
+    { id: 'candidate-requests', label: 'Candidate Requests' },
+    { id: 'candidate-search', label: 'Candidate Search' },
+    { id: 'shortlisted', label: 'Shortlisted' },
+    { id: 'notifications', label: 'Notifications' },
+    { id: 'ai-matching', label: 'AI Matching' },
+    { id: 'hiring-pipeline', label: 'Hiring Pipeline' },
+    { id: 'employment-verification', label: 'Employment Verification' },
+    { id: 'background-verification', label: 'Background Verification' },
   ];
 
   return (
@@ -123,6 +154,21 @@ export const TopNav: React.FC<TopNavProps> = ({
               </button>
               ))
               : null}
+
+            {user ? (
+              <button
+                onClick={() => setActiveTab('notifications')}
+                className="relative p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-200 hover:border-slate-700 transition-colors"
+                title="Notifications"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-bold flex items-center justify-center">
+                    {unreadCount}
+                  </span>
+                )}
+              </button>
+            ) : null}
 
             {user ? (
               <div className="relative">

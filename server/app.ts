@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { apiRouter } from './routes.js';
 import { dbReady } from './db.js';
+import { rateLimit } from './rateLimit.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,7 +13,7 @@ const __dirname = path.dirname(__filename);
  *  - server.ts      → local development (Vite middleware + app.listen)
  *  - api/index.ts   → Vercel serverless entry (handler without app.listen)
  */
-export function createApp(): express.Express {
+export function createApp(options?: { spaFallback?: boolean }): express.Express {
   const app = express();
 
   // Block all request handling until the database snapshot is hydrated —
@@ -28,6 +29,8 @@ export function createApp(): express.Express {
   app.use(express.json({ limit: '25mb' }));
   app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
+  // Basic rate limiting for API routes (production hardening)
+  app.use('/api', rateLimit({ windowMs: 60 * 1000, max: 300 }));
   // API router
   app.use('/api', apiRouter);
 
@@ -55,10 +58,12 @@ export function createApp(): express.Express {
     next();
   });
 
-  // SPA fallback for client-side routes
-  app.get('*', (_req, res) => {
-    res.sendFile(path.resolve(distPath, 'index.html'));
-  });
+  // SPA fallback for client-side routes (production only; dev uses Vite middleware)
+  if (options?.spaFallback !== false) {
+    app.get('*', (_req, res) => {
+      res.sendFile(path.resolve(distPath, 'index.html'));
+    });
+  }
 
   return app;
 }

@@ -1,6 +1,16 @@
 import {
   User,
   CandidateProfile,
+  CandidateReferralProfile,
+  EmployeeProfile,
+  ReferralJob,
+  ReferralRequest,
+  Notification,
+  CandidateShortlist,
+  EmploymentVerification,
+  BackgroundVerificationRequest,
+  VerificationDocument,
+  ConsentRecord,
   JobPosting,
   WorkdayApplication,
   ResumeDocument,
@@ -117,10 +127,10 @@ export const api = {
     }
   },
 
-  async register(name: string, email: string, password: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {
+  async register(name: string, email: string, password: string, roleIntent?: string): Promise<{ user: User; token: string; profile: CandidateProfile }> {
     const res = await fetchWithAuth<{ user: User; token: string; profile: CandidateProfile }>('/api/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ name, email, password }),
+      body: JSON.stringify({ name, email, password, roleIntent }),
     });
     setStoredToken(res.token);
     return res;
@@ -173,6 +183,12 @@ export const api = {
   async getAdminStats(): Promise<AdminPlatformStats> {
     return fetchWithAuth('/api/admin/stats');
   },
+  async getAdminReferralAnalytics(): Promise<any> {
+    return fetchWithAuth('/api/admin/analytics/referrals');
+  },
+  async runAdminCleanup(): Promise<{ removedDocuments: number }> {
+    return fetchWithAuth('/api/admin/cleanup', { method: 'POST' });
+  },
 
   async deleteAdminUser(userId: string): Promise<{ deleted: boolean }> {
     return fetchWithAuth(`/api/admin/users/${userId}/delete`, { method: 'POST' });
@@ -190,7 +206,169 @@ export const api = {
     });
   },
 
+  // Referral marketplace (Milestone 1)
+  async getCandidateReferralProfile(): Promise<CandidateReferralProfile | null> {
+    return fetchWithAuth('/api/referral/candidate-profile');
+  },
+  async updateCandidateReferralProfile(updates: Partial<CandidateReferralProfile>): Promise<CandidateReferralProfile> {
+    return fetchWithAuth('/api/referral/candidate-profile', {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  },
+  async submitCandidateReferralProfile(): Promise<CandidateReferralProfile> {
+    return fetchWithAuth('/api/referral/candidate-profile/submit', { method: 'POST' });
+  },
+  async getEmployeeProfile(): Promise<EmployeeProfile | null> {
+    return fetchWithAuth('/api/employee/me');
+  },
+  async updateEmployeeProfile(updates: Partial<EmployeeProfile>): Promise<EmployeeProfile> {
+    return fetchWithAuth('/api/employee/me', {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    });
+  },
+  async verifyCorporateEmail(): Promise<{ sent: boolean; expiresAt: string; verificationCode?: string }> {
+    return fetchWithAuth('/api/employee/verify-corporate-email', { method: 'POST' });
+  },
+  async confirmCorporateEmail(code: string): Promise<{ verified: boolean; affiliationStatus: string }> {
+    return fetchWithAuth('/api/employee/verify-corporate-email/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+  },
+
+  // Referral marketplace (Milestone 2)
+  async listReferralJobs(params?: { company?: string; status?: string }): Promise<ReferralJob[]> {
+    const qs = new URLSearchParams(params as any).toString();
+    return fetchWithAuth(`/api/referral/jobs${qs ? '?' + qs : ''}`);
+  },
+  async getMyReferralJobs(): Promise<ReferralJob[]> {
+    return fetchWithAuth('/api/referral/jobs/mine');
+  },
+  async getReferralJob(id: string): Promise<ReferralJob> {
+    return fetchWithAuth(`/api/referral/jobs/${id}`);
+  },
+  async createReferralJob(payload: Partial<ReferralJob>): Promise<ReferralJob> {
+    return fetchWithAuth('/api/referral/jobs', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async updateReferralJob(id: string, payload: Partial<ReferralJob>): Promise<ReferralJob> {
+    return fetchWithAuth(`/api/referral/jobs/${id}`, { method: 'PUT', body: JSON.stringify(payload) });
+  },
+  async publishReferralJob(id: string): Promise<ReferralJob> {
+    return fetchWithAuth(`/api/referral/jobs/${id}/publish`, { method: 'POST' });
+  },
+  async closeReferralJob(id: string): Promise<ReferralJob> {
+    return fetchWithAuth(`/api/referral/jobs/${id}/close`, { method: 'POST' });
+  },
+  async reportReferralJob(id: string, reason: string): Promise<ReferralJob> {
+    return fetchWithAuth(`/api/referral/jobs/${id}/report`, { method: 'POST', body: JSON.stringify({ reason }) });
+  },
+  async createReferralRequest(referralJobId: string, coverNote?: string): Promise<ReferralRequest> {
+    return fetchWithAuth('/api/referral/requests', { method: 'POST', body: JSON.stringify({ referralJobId, coverNote }) });
+  },
+  async getMyReferralRequests(): Promise<ReferralRequest[]> {
+    return fetchWithAuth('/api/referral/requests/mine');
+  },
+  async getEmployeeReferralRequests(): Promise<ReferralRequest[]> {
+    return fetchWithAuth('/api/referral/requests/for-employee');
+  },
+  async getReferralRequestHistory(id: string): Promise<any[]> {
+    return fetchWithAuth(`/api/referral/requests/${id}/history`);
+  },
+  async updateReferralRequest(id: string, status: string, note?: string): Promise<ReferralRequest> {
+    return fetchWithAuth(`/api/referral/requests/${id}`, { method: 'PATCH', body: JSON.stringify({ status, note }) });
+  },
+  async withdrawReferralRequest(id: string, note?: string): Promise<ReferralRequest> {
+    return fetchWithAuth(`/api/referral/requests/${id}/withdraw`, { method: 'POST', body: JSON.stringify({ note }) });
+  },
+  async searchCandidates(params: { skills?: string; location?: string; minExperience?: number; jobId?: string }): Promise<any[]> {
+    const qs = new URLSearchParams(params as any).toString();
+    return fetchWithAuth(`/api/referral/candidates/search${qs ? '?' + qs : ''}`);
+  },
+  async createShortlist(candidateUserId: string, note?: string): Promise<CandidateShortlist> {
+    return fetchWithAuth('/api/referral/shortlists', { method: 'POST', body: JSON.stringify({ candidateUserId, note }) });
+  },
+  async getShortlists(): Promise<CandidateShortlist[]> {
+    return fetchWithAuth('/api/referral/shortlists');
+  },
+  async deleteShortlist(id: string): Promise<{ deleted: boolean }> {
+    return fetchWithAuth(`/api/referral/shortlists/${id}`, { method: 'DELETE' });
+  },
+  async getNotifications(): Promise<Notification[]> {
+    return fetchWithAuth('/api/notifications');
+  },
+  async markNotificationRead(id: string): Promise<{ read: boolean }> {
+    return fetchWithAuth(`/api/notifications/${id}/read`, { method: 'PATCH' });
+  },
+  async markAllNotificationsRead(): Promise<{ success: boolean }> {
+    return fetchWithAuth('/api/notifications/read-all', { method: 'POST' });
+  },
+
+  // Verification (Milestone 3)
+  async listEmploymentVerifications(): Promise<EmploymentVerification[]> {
+    return fetchWithAuth('/api/verification/employment');
+  },
+  async createEmploymentVerification(payload: Partial<EmploymentVerification>): Promise<EmploymentVerification> {
+    return fetchWithAuth('/api/verification/employment', { method: 'POST', body: JSON.stringify(payload) });
+  },
+  async getEmploymentVerification(id: string): Promise<EmploymentVerification> {
+    return fetchWithAuth(`/api/verification/employment/${id}`);
+  },
+  async grantEmploymentConsent(id: string): Promise<EmploymentVerification> {
+    return fetchWithAuth(`/api/verification/employment/${id}/consent`, { method: 'POST' });
+  },
+  async withdrawEmploymentConsent(id: string): Promise<EmploymentVerification> {
+    return fetchWithAuth(`/api/verification/employment/${id}/consent/withdraw`, { method: 'POST' });
+  },
+  async sendEmploymentEmailOtp(id: string): Promise<{ sent: boolean; expiresAt: string; verificationCode?: string }> {
+    return fetchWithAuth(`/api/verification/employment/${id}/email-otp`, { method: 'POST' });
+  },
+  async confirmEmploymentEmailOtp(id: string, code: string): Promise<{ verified: boolean }> {
+    return fetchWithAuth(`/api/verification/employment/${id}/email-otp/confirm`, { method: 'POST', body: JSON.stringify({ code }) });
+  },
+  async attachEmploymentDocument(id: string, documentId: string): Promise<EmploymentVerification> {
+    return fetchWithAuth(`/api/verification/employment/${id}/documents`, { method: 'POST', body: JSON.stringify({ documentId }) });
+  },
+  async updateEmploymentVerification(id: string, payload: any): Promise<EmploymentVerification> {
+    return fetchWithAuth(`/api/verification/employment/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+  },
+  async listBgvRequests(): Promise<BackgroundVerificationRequest[]> {
+    return fetchWithAuth('/api/verification/bgv');
+  },
+  async createBgvRequest(checks?: string[]): Promise<BackgroundVerificationRequest> {
+    return fetchWithAuth('/api/verification/bgv', { method: 'POST', body: JSON.stringify({ checks }) });
+  },
+  async getBgvRequest(id: string): Promise<BackgroundVerificationRequest> {
+    return fetchWithAuth(`/api/verification/bgv/${id}`);
+  },
+  async grantBgvConsent(id: string): Promise<BackgroundVerificationRequest> {
+    return fetchWithAuth(`/api/verification/bgv/${id}/consent`, { method: 'POST' });
+  },
+  async withdrawBgvConsent(id: string): Promise<BackgroundVerificationRequest> {
+    return fetchWithAuth(`/api/verification/bgv/${id}/consent/withdraw`, { method: 'POST' });
+  },
+  async attachBgvDocument(id: string, documentId: string): Promise<BackgroundVerificationRequest> {
+    return fetchWithAuth(`/api/verification/bgv/${id}/documents`, { method: 'POST', body: JSON.stringify({ documentId }) });
+  },
+  async updateBgvCheck(id: string, type: string, status: string, result?: string): Promise<BackgroundVerificationRequest> {
+    return fetchWithAuth(`/api/verification/bgv/${id}/checks/${type}`, { method: 'PATCH', body: JSON.stringify({ status, result }) });
+  },
+  async uploadDocument(kind: string, mimeType: string, size: number, contentBase64?: string): Promise<VerificationDocument> {
+    return fetchWithAuth('/api/documents', { method: 'POST', body: JSON.stringify({ kind, mimeType, size, contentBase64 }) });
+  },
+  async getDocumentContent(id: string): Promise<{ id: string; mimeType: string; contentBase64: string | null }> {
+    return fetchWithAuth(`/api/documents/${id}/content`);
+  },
+  async deleteDocument(id: string): Promise<{ deleted: boolean }> {
+    return fetchWithAuth(`/api/documents/${id}`, { method: 'DELETE' });
+  },
+  async getConsentRecords(): Promise<ConsentRecord[]> {
+    return fetchWithAuth('/api/consent-records');
+  },
+
   // Resumes
+
   async getResumes(): Promise<ResumeDocument[]> {
     return fetchWithAuth('/api/resumes');
   },

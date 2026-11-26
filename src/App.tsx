@@ -5,6 +5,20 @@ import { JobDiscoveryView } from './components/JobDiscoveryView';
 import { WorkdayHubView } from './components/WorkdayHubView';
 import { ApplicationTrackerView } from './components/ApplicationTrackerView';
 import { ResumeProfileView } from './components/ResumeProfileView';
+import { ReferralProfileView } from './components/ReferralProfileView';
+import { EmployeeProfileView } from './components/EmployeeProfileView';
+import { ReferralMarketplaceView } from './components/ReferralMarketplaceView';
+import { MyReferralRequestsView } from './components/MyReferralRequestsView';
+import { PostReferralJobView } from './components/PostReferralJobView';
+import { MyReferralJobsView } from './components/MyReferralJobsView';
+import { CandidateRequestsView } from './components/CandidateRequestsView';
+import { CandidateSearchView } from './components/CandidateSearchView';
+import { ShortlistedCandidatesView } from './components/ShortlistedCandidatesView';
+import { NotificationsView } from './components/NotificationsView';
+import { AiMatchingView } from './components/AiMatchingView';
+import { HiringPipelineView } from './components/HiringPipelineView';
+import { EmploymentVerificationView } from './components/EmploymentVerificationView';
+import { BackgroundVerificationView } from './components/BackgroundVerificationView';
 import { DocsDeploymentView } from './components/DocsDeploymentView';
 import { RelevanceAuditHub } from './components/RelevanceAuditHub';
 import { AdminConsoleView } from './components/AdminConsoleView';
@@ -138,6 +152,23 @@ function MainDashboard() {
                 onRefreshResumes={loadUserData}
               />
             )}
+
+            {activeTab === 'referral-profile' && <ReferralProfileView />}
+
+            {activeTab === 'employee-profile' && <EmployeeProfileView />}
+
+            {activeTab === 'referral-marketplace' && <ReferralMarketplaceView />}
+            {activeTab === 'my-referrals' && <MyReferralRequestsView />}
+            {activeTab === 'post-referral-job' && <PostReferralJobView />}
+            {activeTab === 'my-referral-jobs' && <MyReferralJobsView />}
+            {activeTab === 'candidate-requests' && <CandidateRequestsView />}
+            {activeTab === 'candidate-search' && <CandidateSearchView />}
+            {activeTab === 'shortlisted' && <ShortlistedCandidatesView />}
+            {activeTab === 'notifications' && <NotificationsView />}
+            {activeTab === 'ai-matching' && <AiMatchingView />}
+            {activeTab === 'hiring-pipeline' && <HiringPipelineView />}
+            {activeTab === 'employment-verification' && <EmploymentVerificationView />}
+            {activeTab === 'background-verification' && <BackgroundVerificationView />}
           </>
         )}
       </main>
