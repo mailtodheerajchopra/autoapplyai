@@ -25,6 +25,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   const [showSandboxPersonas, setShowSandboxPersonas] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -41,7 +42,7 @@ export const TopNav: React.FC<TopNavProps> = ({
     return () => clearInterval(t);
   }, [user]);
 
-  const candidateNavItems = [
+  const primaryNavItems = [
     { id: 'jobs', label: 'Discovered Jobs' },
     {
       id: 'workday',
@@ -49,6 +50,9 @@ export const TopNav: React.FC<TopNavProps> = ({
     },
     { id: 'tracker', label: 'Tracked Applications' },
     { id: 'profile', label: 'My Resume & Profile' },
+    { id: 'notifications', label: 'Notifications' },
+  ];
+  const secondaryNavItems = [
     { id: 'referral-profile', label: 'Referral Profile' },
     { id: 'employee-profile', label: 'Employee Profile' },
     { id: 'referral-marketplace', label: 'Referral Marketplace' },
@@ -58,7 +62,6 @@ export const TopNav: React.FC<TopNavProps> = ({
     { id: 'candidate-requests', label: 'Candidate Requests' },
     { id: 'candidate-search', label: 'Candidate Search' },
     { id: 'shortlisted', label: 'Shortlisted' },
-    { id: 'notifications', label: 'Notifications' },
     { id: 'ai-matching', label: 'AI Matching' },
     { id: 'hiring-pipeline', label: 'Hiring Pipeline' },
     { id: 'employment-verification', label: 'Employment Verification' },
@@ -103,7 +106,7 @@ export const TopNav: React.FC<TopNavProps> = ({
           {/* Zone 2: Portal-Specific Navigation Links */}
           {activePortal === 'candidate' ? (
             <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300 min-w-0 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
-              {candidateNavItems.map((item) => {
+              {primaryNavItems.map((item) => {
                 const isActive = activeTab === item.id;
                 return (
                   <button
@@ -119,6 +122,29 @@ export const TopNav: React.FC<TopNavProps> = ({
                   </button>
                 );
               })}
+              <div className="relative">
+                <button
+                  onClick={() => setMoreOpen(!moreOpen)}
+                  className="relative py-1 transition-colors whitespace-nowrap shrink-0 hover:text-white"
+                >
+                  More
+                </button>
+                {moreOpen && (
+                  <div className="absolute right-0 mt-2 w-56 rounded-xl bg-slate-900 border border-slate-800 shadow-2xl p-2 z-50 text-xs">
+                    {secondaryNavItems.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => { setActiveTab(item.id); setMoreOpen(false); }}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-lg transition-colors ${
+                          activeTab === item.id ? 'bg-indigo-950/60 text-indigo-300' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </nav>
           ) : (
             <div className="hidden md:flex items-center gap-3 text-xs text-slate-400 min-w-0 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
