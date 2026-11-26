@@ -6,6 +6,12 @@ export interface User {
   salt: string;
   role: 'candidate' | 'employee' | 'recruiter' | 'admin' | 'verifier';
   capabilities: string[];
+  publisherStatus: 'untrusted' | 'approved' | 'suspended' | 'revoked';
+  publisherApprovedAt?: string;
+  publisherApprovedBy?: string;
+  recruiterStatus: 'none' | 'pending' | 'authorized' | 'revoked';
+  recruiterAuthorizedAt?: string;
+  recruiterAuthorizedBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -411,6 +417,7 @@ export type ReferralJobEmploymentType = 'Full-time' | 'Contract' | 'Part-time' |
 export interface ReferralJob {
   id: string;
   postedByUserId: string;
+  opportunityType: 'regular_job' | 'employee_referral' | 'community_shared';
   company: string;
   title: string;
   requisitionId: string;
@@ -436,7 +443,7 @@ export interface ReferralJob {
 
 export type ReferralRequestStatus =
   'requested' | 'under_review' | 'shortlisted' | 'accepted' |
-  'referral_submitted' | 'interview_scheduled' | 'selected' |
+  'referral_confirmed' | 'referral_submitted' | 'interview_scheduled' | 'selected' |
   'rejected' | 'withdrawn';
 
 export interface ReferralRequest {

@@ -29,7 +29,7 @@ describe('Milestone 3 – verification & privacy', () => {
 
   it('employment consent can be withdrawn', async () => {
     const u = await register(app, `ev2-${Date.now()}@test.dev`);
-    const create = await request(app).post('/api/verification/employment').set('Authorization', `Bearer ${u.token}`).send({ employer: 'Acme', designation: 'Eng', corporateEmail: 'me@acme.com' });
+    const create = await request(app).post('/api/verification/employment').set('Authorization', `Bearer ${u.token}`).send({ employer: 'Acme', designation: 'Eng', isCurrent: true, corporateEmail: 'me@acme.com' });
     const id = create.body.id;
     await request(app).post(`/api/verification/employment/${id}/consent`).set('Authorization', `Bearer ${u.token}`).send({});
     const w = await request(app).post(`/api/verification/employment/${id}/consent/withdraw`).set('Authorization', `Bearer ${u.token}`).send({});
@@ -39,7 +39,7 @@ describe('Milestone 3 – verification & privacy', () => {
 
   it('employment email OTP flow', async () => {
     const u = await register(app, `ev3-${Date.now()}@test.dev`);
-    const create = await request(app).post('/api/verification/employment').set('Authorization', `Bearer ${u.token}`).send({ employer: 'Acme', designation: 'Eng', corporateEmail: 'me@acme.com', method: 'email_otp' });
+    const create = await request(app).post('/api/verification/employment').set('Authorization', `Bearer ${u.token}`).send({ employer: 'Acme', designation: 'Eng', isCurrent: true, corporateEmail: 'me@acme.com', method: 'email_otp' });
     const id = create.body.id;
     await request(app).post(`/api/verification/employment/${id}/consent`).set('Authorization', `Bearer ${u.token}`).send({});
     const otp = await request(app).post(`/api/verification/employment/${id}/email-otp`).set('Authorization', `Bearer ${u.token}`).send({});
@@ -48,33 +48,16 @@ describe('Milestone 3 – verification & privacy', () => {
     expect(confirm.status).toBe(200);
   });
 
-  it('BGV requires consent and tracks checks', async () => {
+  it('BGV is disabled (current-employer verification only)', async () => {
     const u = await register(app, `bgv-${Date.now()}@test.dev`);
     const create = await request(app).post('/api/verification/bgv').set('Authorization', `Bearer ${u.token}`).send({ checks: ['identity', 'education'] });
-    expect(create.status).toBe(201);
-    const id = create.body.id;
-    expect(create.body.status).toBe('pending_consent');
-
-    const adminToken = (await request(app).post('/api/auth/demo-switch').send({ userId: 'usr_admin' })).body.token;
-    // cannot complete before consent
-    const tooEarly = await request(app).patch(`/api/verification/bgv/${id}/checks/identity`).set('Authorization', `Bearer ${adminToken}`).send({ status: 'verified' });
-    // route doesn't enforce consent at check level, but overall status; we still allow admin to update checks? To enforce, we could check consent. Let's require consent before any check update.
-    // For this test, grant consent first.
-    await request(app).post(`/api/verification/bgv/${id}/consent`).set('Authorization', `Bearer ${u.token}`).send({});
-    const upd = await request(app).patch(`/api/verification/bgv/${id}/checks/identity`).set('Authorization', `Bearer ${adminToken}`).send({ status: 'verified', result: 'ok' });
-    expect(upd.status).toBe(200);
-    const final = await request(app).patch(`/api/verification/bgv/${id}/checks/education`).set('Authorization', `Bearer ${adminToken}`).send({ status: 'verified', result: 'ok' });
-    expect(final.body.status).toBe('completed');
+    expect(create.status).toBe(410);
   });
 
-  it('BGV consent withdrawal', async () => {
+  it('BGV consent withdrawal not applicable (disabled)', async () => {
     const u = await register(app, `bgv2-${Date.now()}@test.dev`);
     const create = await request(app).post('/api/verification/bgv').set('Authorization', `Bearer ${u.token}`).send({});
-    const id = create.body.id;
-    await request(app).post(`/api/verification/bgv/${id}/consent`).set('Authorization', `Bearer ${u.token}`).send({});
-    const w = await request(app).post(`/api/verification/bgv/${id}/consent/withdraw`).set('Authorization', `Bearer ${u.token}`).send({});
-    expect(w.status).toBe(200);
-    expect(w.body.status).toBe('withdrawn');
+    expect(create.status).toBe(410);
   });
 
   it('documents access authorization and deletion', async () => {
@@ -100,7 +83,7 @@ describe('Milestone 3 – verification & privacy', () => {
 
   it('consent records are maintained', async () => {
     const u = await register(app, `cns-${Date.now()}@test.dev`);
-    const create = await request(app).post('/api/verification/employment').set('Authorization', `Bearer ${u.token}`).send({ employer: 'Acme', designation: 'Eng', corporateEmail: 'me@acme.com' });
+    const create = await request(app).post('/api/verification/employment').set('Authorization', `Bearer ${u.token}`).send({ employer: 'Acme', designation: 'Eng', isCurrent: true, corporateEmail: 'me@acme.com' });
     const id = create.body.id;
     await request(app).post(`/api/verification/employment/${id}/consent`).set('Authorization', `Bearer ${u.token}`).send({});
     const records = await request(app).get('/api/consent-records').set('Authorization', `Bearer ${u.token}`);
@@ -110,7 +93,7 @@ describe('Milestone 3 – verification & privacy', () => {
 
   it('non-admin cannot update employment verification status', async () => {
     const u = await register(app, `ev4-${Date.now()}@test.dev`);
-    const create = await request(app).post('/api/verification/employment').set('Authorization', `Bearer ${u.token}`).send({ employer: 'Acme', designation: 'Eng', corporateEmail: 'me@acme.com' });
+    const create = await request(app).post('/api/verification/employment').set('Authorization', `Bearer ${u.token}`).send({ employer: 'Acme', designation: 'Eng', isCurrent: true, corporateEmail: 'me@acme.com' });
     const id = create.body.id;
     await request(app).post(`/api/verification/employment/${id}/consent`).set('Authorization', `Bearer ${u.token}`).send({});
     const res = await request(app).patch(`/api/verification/employment/${id}`).set('Authorization', `Bearer ${u.token}`).send({ status: 'verified' });

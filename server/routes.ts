@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import mammoth from 'mammoth';
 import { db } from './db.js';
-import { authMiddleware, generateToken, isEmployee, isVerifiedEmployee, isRecruiter, isVerifier } from './auth.js';
+import { authMiddleware, generateToken, isEmployee, isVerifiedEmployee, isRecruiter, isVerifier, isApprovedPublisher, isAuthorizedRecruiter } from './auth.js';
 import {
   parseResumeWithGemini,
   extractTextFromPdfOrBinary,
@@ -855,13 +855,43 @@ apiRouter.post('/employee/:userId/reject-affiliation', authMiddleware, (req: Req
 // --- Referral jobs ---
 apiRouter.post('/referral/jobs', authMiddleware, (req: Request, res: Response) => {
   const userId = req.user!.id;
-  if (!isVerifiedEmployee(req.user)) {
-    res.status(403).json({ error: 'Verified employee affiliation required to post referral jobs' });
+  const body = req.body || {};
+  const opportunityType = body.opportunityType || 'community_shared';
+  if (!['regular_job', 'employee_referral', 'community_shared'].includes(opportunityType)) {
+    res.status(400).json({ error: 'Invalid opportunity type' });
     return;
   }
-  const job = db.createReferralJob(userId, req.body || {});
-  db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'referral', action: 'REFERRAL_JOB_CREATED', details: `Created referral job ${job.id} (${job.title} @ ${job.company}).`, severity: 'info' });
-  res.status(201).json(job);
+  if (opportunityType === 'employee_referral' && !isVerifiedEmployee(req.user)) {
+    res.status(403).json({ error: 'Verified employee affiliation required for employee referral opportunities' });
+    return;
+  }
+  // duplicate detection (same user/company/title/type)
+  const existing = db.getReferralJobs({ mine: userId }).find((j: any) =>
+    j.company.toLowerCase() === String(body.company || '').toLowerCase() &&
+    j.title.toLowerCase() === String(body.title || '').toLowerCase() &&
+    j.opportunityType === opportunityType
+  );
+  if (existing) {
+    res.status(409).json({ error: 'Duplicate opportunity' });
+    return;
+  }
+  // suspicious URL check
+  if (body.jobUrl && !/^https?:\/\//i.test(String(body.jobUrl))) {
+    res.status(400).json({ error: 'Invalid job URL' });
+    return;
+  }
+  const job = db.createReferralJob(userId, { ...body, opportunityType });
+  // unapproved publishers create drafts pending review
+  if (!isApprovedPublisher(req.user) && req.user!.role !== 'admin') {
+    db.updateReferralJob(userId, job.id, { publicationStatus: 'pending_review' } as any);
+  } else {
+    db.updateReferralJob(userId, job.id, { publicationStatus: 'draft' } as any);
+  }
+  if (opportunityType === 'employee_referral') {
+    db.updateReferralJob(userId, job.id, { verifiedReferral: true } as any);
+  }
+  db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'referral', action: 'OPPORTUNITY_CREATED', details: `Created ${opportunityType} opportunity ${job.id}.`, severity: 'info' });
+  res.status(201).json(db.getReferralJobById(job.id));
 });
 
 apiRouter.get('/referral/jobs/mine', authMiddleware, (req: Request, res: Response) => {
@@ -897,7 +927,9 @@ apiRouter.post('/referral/jobs/:id/publish', authMiddleware, async (req: Request
   const job = db.getReferralJobById(req.params.id);
   if (!job) { res.status(404).json({ error: 'Not found' }); return; }
   if (job.postedByUserId !== userId && req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
-  if (!isVerifiedEmployee(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Verified employee affiliation required' }); return; }
+  if (!isApprovedPublisher(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Approved publisher permission required to publish' }); return; }
+  if (job.opportunityType === 'employee_referral' && !isVerifiedEmployee(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Verified employee affiliation required for employee referral opportunities' }); return; }
+  db.updateReferralJob(userId, job.id, { publicationStatus: 'published' } as any);
   // Best-effort AI extraction of required skills / experience from the description
   if ((!job.skillsRequired || job.skillsRequired.length === 0) && job.description && job.description.trim().length >= 30) {
     try {
@@ -997,7 +1029,7 @@ apiRouter.post('/referral/requests/:id/withdraw', authMiddleware, (req: Request,
 
 // --- Candidate discovery (anonymous) ---
 apiRouter.get('/referral/candidates/search', authMiddleware, (req: Request, res: Response) => {
-  if (!isEmployee(req.user) && !isRecruiter(req.user)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (!isAuthorizedRecruiter(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Authorized recruiter access required' }); return; }
   const skills = req.query.skills ? String(req.query.skills).split(',').map(s=>s.trim()).filter(Boolean) : undefined;
   const location = req.query.location ? String(req.query.location) : undefined;
   const minExperience = req.query.minExperience ? Number(req.query.minExperience) : undefined;
@@ -1008,7 +1040,7 @@ apiRouter.get('/referral/candidates/search', authMiddleware, (req: Request, res:
 
 // --- Shortlists ---
 apiRouter.post('/referral/shortlists', authMiddleware, (req: Request, res: Response) => {
-  if (!isEmployee(req.user) && !isRecruiter(req.user)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (!isAuthorizedRecruiter(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Authorized recruiter access required' }); return; }
   const { candidateUserId, note } = req.body || {};
   if (!candidateUserId) { res.status(400).json({ error: 'candidateUserId required' }); return; }
   const s = db.createShortlist(req.user!.id, candidateUserId, note);
@@ -1016,11 +1048,12 @@ apiRouter.post('/referral/shortlists', authMiddleware, (req: Request, res: Respo
 });
 
 apiRouter.get('/referral/shortlists', authMiddleware, (req: Request, res: Response) => {
-  if (!isEmployee(req.user) && !isRecruiter(req.user)) { res.status(403).json({ error: 'Forbidden' }); return; }
+  if (!isAuthorizedRecruiter(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Authorized recruiter access required' }); return; }
   res.json(db.getShortlists(req.user!.id));
 });
 
 apiRouter.delete('/referral/shortlists/:id', authMiddleware, (req: Request, res: Response) => {
+  if (!isAuthorizedRecruiter(req.user) && req.user!.role !== 'admin') { res.status(403).json({ error: 'Authorized recruiter access required' }); return; }
   const ok = db.deleteShortlist(req.user!.id, req.params.id);
   if (!ok) { res.status(404).json({ error: 'Not found' }); return; }
   res.json({ deleted: true });
@@ -1058,7 +1091,8 @@ apiRouter.post('/verification/employment', authMiddleware, (req: Request, res: R
   const userId = req.user!.id;
   const { employer, designation, startDate, endDate, isCurrent, corporateEmail, method } = req.body || {};
   if (!employer) { res.status(400).json({ error: 'employer is required' }); return; }
-  const ev = db.createEmploymentVerification(userId, { employer, designation, startDate, endDate, isCurrent, corporateEmail, method });
+  if (isCurrent !== true) { res.status(400).json({ error: 'Only current-employer verification is supported' }); return; }
+  const ev = db.createEmploymentVerification(userId, { employer, designation, startDate, endDate, isCurrent: true, corporateEmail, method });
   db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'verification', action: 'EMPLOYMENT_VERIFICATION_CREATED', details: `Created employment verification for ${employer}.`, severity: 'info' });
   res.status(201).json(ev);
 });
@@ -1145,11 +1179,7 @@ apiRouter.get('/verification/bgv', authMiddleware, (req: Request, res: Response)
 });
 
 apiRouter.post('/verification/bgv', authMiddleware, (req: Request, res: Response) => {
-  const userId = req.user!.id;
-  const { checks } = req.body || {};
-  const r = db.createBgvRequest(userId, checks);
-  db.addAuditLog({ userId, timestamp: new Date().toISOString(), category: 'verification', action: 'BGV_CREATED', details: `BGV request ${r.id} created.`, severity: 'info' });
-  res.status(201).json(r);
+  res.status(410).json({ error: 'Background verification is disabled; only current-employer verification is supported.' });
 });
 
 apiRouter.get('/verification/bgv/:id', authMiddleware, (req: Request, res: Response) => {
@@ -1185,18 +1215,7 @@ apiRouter.post('/verification/bgv/:id/documents', authMiddleware, (req: Request,
 });
 
 apiRouter.patch('/verification/bgv/:id/checks/:type', authMiddleware, (req: Request, res: Response) => {
-  const actor = req.user!;
-  if (actor.role !== 'admin' && actor.role !== 'verifier' && !isVerifier(actor)) { res.status(403).json({ error: 'Forbidden' }); return; }
-  const { status, result } = req.body || {};
-  const allowed = ['pending', 'verified', 'failed', 'skipped'];
-  if (!allowed.includes(status)) { res.status(400).json({ error: 'Invalid status' }); return; }
-  const r = db.updateBgvCheck(req.params.id, req.params.type as any, status, result);
-  if (!r) { res.status(404).json({ error: 'Not found' }); return; }
-  db.addAuditLog({ userId: actor.id, timestamp: new Date().toISOString(), category: 'verification', action: 'BGV_CHECK_UPDATED', details: `BGV ${req.params.id} check ${req.params.type} -> ${status}.`, severity: 'info' });
-  if (r.status === 'completed') {
-    db.createNotification(r.userId, 'verification_completed', 'Background verification completed', 'Your background verification has been completed.', '/background-verification');
-  }
-  res.json(r);
+  res.status(410).json({ error: 'Background verification is disabled; only current-employer verification is supported.' });
 });
 
 // Documents
@@ -1304,6 +1323,60 @@ apiRouter.get('/referral/candidates/:userId/resume', authMiddleware, (req: Reque
   if (!resume) { res.status(404).json({ error: 'No resume' }); return; }
   db.addAuditLog({ userId: requesterUserId, timestamp: new Date().toISOString(), category: 'privacy', action: 'RESUME_ACCESSED', details: `Resume accessed for candidate ${candidateUserId}.`, severity: 'info' });
   res.json(resume);
+});
+
+// ==========================================
+// Publisher & Recruiter Administration
+// ==========================================
+
+apiRouter.get('/admin/publishers', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  res.json(db.getPublishers().map(u => ({ id: u.id, email: u.email, name: u.name, publisherStatus: u.publisherStatus, publisherApprovedAt: u.publisherApprovedAt })));
+});
+
+apiRouter.post('/admin/publishers/:userId/approve', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const u = db.approvePublisher(req.params.userId, req.user!.id);
+  if (!u) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'security', action: 'PUBLISHER_APPROVED', details: `Publisher approved for ${req.params.userId}.`, severity: 'success' });
+  res.json({ success: true });
+});
+
+apiRouter.post('/admin/publishers/:userId/suspend', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const u = db.suspendPublisher(req.params.userId, req.user!.id);
+  if (!u) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'security', action: 'PUBLISHER_SUSPENDED', details: `Publisher suspended for ${req.params.userId}.`, severity: 'warn' });
+  res.json({ success: true });
+});
+
+apiRouter.post('/admin/publishers/:userId/revoke', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const u = db.revokePublisher(req.params.userId, req.user!.id);
+  if (!u) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'security', action: 'PUBLISHER_REVOKED', details: `Publisher revoked for ${req.params.userId}.`, severity: 'warn' });
+  res.json({ success: true });
+});
+
+apiRouter.get('/admin/recruiters', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  res.json(db.getRecruiters().map(u => ({ id: u.id, email: u.email, name: u.name, recruiterStatus: u.recruiterStatus, recruiterAuthorizedAt: u.recruiterAuthorizedAt })));
+});
+
+apiRouter.post('/admin/recruiters/:userId/authorize', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const u = db.authorizeRecruiter(req.params.userId, req.user!.id);
+  if (!u) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'security', action: 'RECRUITER_AUTHORIZED', details: `Recruiter authorized for ${req.params.userId}.`, severity: 'success' });
+  res.json({ success: true });
+});
+
+apiRouter.post('/admin/recruiters/:userId/revoke', authMiddleware, (req: Request, res: Response) => {
+  if (req.user!.role !== 'admin') { res.status(403).json({ error: 'Forbidden' }); return; }
+  const u = db.revokeRecruiter(req.params.userId, req.user!.id);
+  if (!u) { res.status(404).json({ error: 'Not found' }); return; }
+  db.addAuditLog({ userId: req.user!.id, timestamp: new Date().toISOString(), category: 'security', action: 'RECRUITER_REVOKED', details: `Recruiter revoked for ${req.params.userId}.`, severity: 'warn' });
+  res.json({ success: true });
 });
 
 // ==========================================

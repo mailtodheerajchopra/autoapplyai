@@ -38,8 +38,10 @@ describe('Milestone 5 – analytics & hardening', () => {
     expect(res.status).toBe(400);
   });
 
-  it('recruiter role can search candidates', async () => {
+  it('recruiter role can search candidates after authorization', async () => {
     const rec = await register(app, `rec-${Date.now()}@test.dev`, 'recruiter');
+    const adminToken = (await request(app).post('/api/auth/demo-switch').send({ userId: 'usr_admin' })).body.token;
+    await request(app).post(`/api/admin/recruiters/${rec.user.id}/authorize`).set('Authorization', `Bearer ${adminToken}`).send({});
     const res = await request(app).get('/api/referral/candidates/search').set('Authorization', `Bearer ${rec.token}`);
     expect(res.status).toBe(200);
   });

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 
-const STATUSES = ['under_review', 'shortlisted', 'accepted', 'rejected', 'referral_submitted', 'interview_scheduled', 'selected'];
+const STATUSES = ['under_review', 'shortlisted', 'accepted', 'referral_confirmed', 'referral_submitted', 'interview_scheduled', 'selected', 'rejected'];
 
 export const CandidateRequestsView: React.FC = () => {
   const [reqs, setReqs] = useState<any[]>([]);

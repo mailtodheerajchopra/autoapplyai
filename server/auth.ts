@@ -149,3 +149,16 @@ export function isVerifier(user: User | undefined): boolean {
   if (!user) return false;
   return user.role === 'verifier' || user.role === 'admin' || hasCapability(user, 'can_verify');
 }
+// ---------- Publisher / recruiter authorization (final requirements) ----------
+
+export function isApprovedPublisher(user: User | undefined): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return user.publisherStatus === 'approved';
+}
+
+export function isAuthorizedRecruiter(user: User | undefined): boolean {
+  if (!user) return false;
+  if (user.role === 'admin') return true;
+  return user.recruiterStatus === 'authorized';
+}

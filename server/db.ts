@@ -221,6 +221,8 @@ class DatabaseService {
     stored.users.forEach((u: any) => {
       if (!u.role) u.role = 'candidate';
       if (!Array.isArray(u.capabilities)) u.capabilities = [];
+      if (!u.publisherStatus) u.publisherStatus = 'untrusted';
+      if (!u.recruiterStatus) u.recruiterStatus = 'none';
       if (!u.updatedAt) u.updatedAt = u.createdAt || new Date().toISOString();
     });
     // Opt-in demo personas: scrub legacy seed users from any stored
@@ -404,7 +406,13 @@ class DatabaseService {
       passwordHash: hashAdmin,
       salt: saltAdmin,
       role: 'admin',
-      capabilities: ['can_admin', 'can_recruit', 'can_verify', 'can_refer'],
+      capabilities: ['can_admin', 'can_recruit', 'can_verify', 'can_refer', 'can_publish'],
+      publisherStatus: 'approved',
+      publisherApprovedAt: new Date().toISOString(),
+      publisherApprovedBy: 'system',
+      recruiterStatus: 'authorized',
+      recruiterAuthorizedAt: new Date().toISOString(),
+      recruiterAuthorizedBy: 'system',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -433,6 +441,8 @@ class DatabaseService {
       salt: salt1,
       role: 'candidate',
       capabilities: [],
+      publisherStatus: 'untrusted',
+      recruiterStatus: 'none',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -445,6 +455,8 @@ class DatabaseService {
       salt: salt2,
       role: 'candidate',
       capabilities: [],
+      publisherStatus: 'untrusted',
+      recruiterStatus: 'none',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -867,7 +879,9 @@ class DatabaseService {
       passwordHash: hash,
       salt,
       role: assignedRole,
-      capabilities: assignedRole === 'admin' ? ['can_admin', 'can_recruit', 'can_verify', 'can_refer'] : [],
+      capabilities: assignedRole === 'admin' ? ['can_admin', 'can_recruit', 'can_verify', 'can_refer', 'can_publish'] : [],
+      publisherStatus: assignedRole === 'admin' ? 'approved' : 'untrusted',
+      recruiterStatus: assignedRole === 'admin' ? 'authorized' : 'none',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1494,6 +1508,63 @@ class DatabaseService {
     return this.data.resumes.filter(r => r.userId === candidateUserId).sort((a,b)=>new Date(b.uploadedAt).getTime()-new Date(a.uploadedAt).getTime())[0];
   }
 
+  // ---------- Publisher / recruiter authorization ----------
+  approvePublisher(userId: string, adminId: string): User | undefined {
+    const u = this.data.users.find(x => x.id === userId);
+    if (!u) return undefined;
+    u.publisherStatus = 'approved';
+    u.publisherApprovedAt = new Date().toISOString();
+    u.publisherApprovedBy = adminId;
+    if (!u.capabilities.includes('can_publish')) u.capabilities.push('can_publish');
+    u.updatedAt = new Date().toISOString();
+    this.persist(); void this.saveNow();
+    return u;
+  }
+  suspendPublisher(userId: string, adminId: string): User | undefined {
+    const u = this.data.users.find(x => x.id === userId);
+    if (!u) return undefined;
+    u.publisherStatus = 'suspended';
+    u.updatedAt = new Date().toISOString();
+    u.capabilities = u.capabilities.filter(c => c !== 'can_publish');
+    this.persist(); void this.saveNow();
+    return u;
+  }
+  revokePublisher(userId: string, adminId: string): User | undefined {
+    const u = this.data.users.find(x => x.id === userId);
+    if (!u) return undefined;
+    u.publisherStatus = 'revoked';
+    u.updatedAt = new Date().toISOString();
+    u.capabilities = u.capabilities.filter(c => c !== 'can_publish');
+    this.persist(); void this.saveNow();
+    return u;
+  }
+  getPublishers(): User[] {
+    return this.data.users.filter(u => u.publisherStatus && u.publisherStatus !== 'untrusted');
+  }
+  authorizeRecruiter(userId: string, adminId: string): User | undefined {
+    const u = this.data.users.find(x => x.id === userId);
+    if (!u) return undefined;
+    u.recruiterStatus = 'authorized';
+    u.recruiterAuthorizedAt = new Date().toISOString();
+    u.recruiterAuthorizedBy = adminId;
+    if (!u.capabilities.includes('can_recruit')) u.capabilities.push('can_recruit');
+    u.updatedAt = new Date().toISOString();
+    this.persist(); void this.saveNow();
+    return u;
+  }
+  revokeRecruiter(userId: string, adminId: string): User | undefined {
+    const u = this.data.users.find(x => x.id === userId);
+    if (!u) return undefined;
+    u.recruiterStatus = 'revoked';
+    u.updatedAt = new Date().toISOString();
+    u.capabilities = u.capabilities.filter(c => c !== 'can_recruit');
+    this.persist(); void this.saveNow();
+    return u;
+  }
+  getRecruiters(): User[] {
+    return this.data.users.filter(u => u.recruiterStatus && u.recruiterStatus !== 'none');
+  }
+
   // ---------- Referral jobs ----------
 
   getReferralJobs(filter?: { status?: string; company?: string; mine?: string }): ReferralJob[] {
@@ -1536,6 +1607,7 @@ class DatabaseService {
     const job: ReferralJob = {
       id: 'rjob_' + crypto.randomUUID().slice(0, 8),
       postedByUserId,
+      opportunityType: (payload.opportunityType as any) || 'community_shared',
       company: payload.company || '',
       title: payload.title || '',
       requisitionId: payload.requisitionId || '',
@@ -1567,7 +1639,7 @@ class DatabaseService {
   updateReferralJob(userId: string, jobId: string, updates: Partial<ReferralJob>): ReferralJob | undefined {
     const job = this.data.referralJobs.find(j => j.id === jobId && j.postedByUserId === userId);
     if (!job) return undefined;
-    const allowed = ['company','title','requisitionId','description','skillsRequired','minExperience','maxExperience','location','workMode','employmentType','jobUrl','referralProvider','availableSlots','expiresAt','instructions','status'];
+    const allowed = ['company','title','requisitionId','description','skillsRequired','minExperience','maxExperience','location','workMode','employmentType','jobUrl','referralProvider','availableSlots','expiresAt','instructions','status','opportunityType'];
     for (const k of allowed) {
       if (Object.prototype.hasOwnProperty.call(updates, k)) (job as any)[k] = (updates as any)[k];
     }
@@ -1700,8 +1772,9 @@ class DatabaseService {
     const allowedTransitions: Record<string, ReferralRequestStatus[]> = {
       requested: ['under_review','shortlisted','accepted','rejected','withdrawn'],
       under_review: ['shortlisted','accepted','rejected','withdrawn'],
-      shortlisted: ['accepted','rejected','referral_submitted','withdrawn'],
-      accepted: ['referral_submitted','interview_scheduled','rejected','withdrawn'],
+      shortlisted: ['accepted','rejected','referral_confirmed','referral_submitted','withdrawn'],
+      accepted: ['referral_confirmed','referral_submitted','interview_scheduled','rejected','withdrawn'],
+      referral_confirmed: ['referral_submitted','interview_scheduled','rejected'],
       referral_submitted: ['interview_scheduled','selected','rejected'],
       interview_scheduled: ['selected','rejected'],
     };

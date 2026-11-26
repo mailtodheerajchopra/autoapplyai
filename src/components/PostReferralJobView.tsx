@@ -3,7 +3,7 @@ import { api } from '../api';
 
 export const PostReferralJobView: React.FC = () => {
   const [form, setForm] = useState<any>({
-    company: '', title: '', requisitionId: '', description: '', skillsRequired: '', minExperience: 0, maxExperience: 0,
+    opportunityType: 'community_shared', company: '', title: '', requisitionId: '', description: '', skillsRequired: '', minExperience: 0, maxExperience: 0,
     location: '', workMode: 'Remote', employmentType: 'Full-time', jobUrl: '', referralProvider: '', availableSlots: 1,
     expiresAt: '', instructions: '',
   });
@@ -25,7 +25,7 @@ export const PostReferralJobView: React.FC = () => {
       const job = await api.createReferralJob(payload);
       if (publish) await api.publishReferralJob(job.id);
       setMessage(`Job ${publish ? 'published' : 'saved as draft'}: ${job.title}`);
-      setForm({ company: '', title: '', requisitionId: '', description: '', skillsRequired: '', minExperience: 0, maxExperience: 0, location: '', workMode: 'Remote', employmentType: 'Full-time', jobUrl: '', referralProvider: '', availableSlots: 1, expiresAt: '', instructions: '' });
+      setForm({ opportunityType: 'community_shared', company: '', title: '', requisitionId: '', description: '', skillsRequired: '', minExperience: 0, maxExperience: 0, location: '', workMode: 'Remote', employmentType: 'Full-time', jobUrl: '', referralProvider: '', availableSlots: 1, expiresAt: '', instructions: '' });
     } catch (e) {
       setMessage((e as Error).message);
     } finally {
@@ -45,6 +45,14 @@ export const PostReferralJobView: React.FC = () => {
       <h2 className="text-xl font-bold text-white">Post Referral Job</h2>
       {message && <div className="text-sm text-emerald-300">{message}</div>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <label className="text-sm text-slate-300">
+          Opportunity type
+          <select className="mt-1 w-full rounded-lg bg-slate-900 border border-slate-800 px-3 py-2 text-white" value={form.opportunityType} onChange={(e) => setForm({ ...form, opportunityType: e.target.value })}>
+            <option value="regular_job">Regular job</option>
+            <option value="employee_referral">Employee referral</option>
+            <option value="community_shared">Community-shared job</option>
+          </select>
+        </label>
         {field('company', 'Company name')}
         {field('title', 'Job title')}
         {field('requisitionId', 'Requisition ID')}

@@ -51,15 +51,11 @@ describe('Milestone 6 – security & resume access', () => {
   it('anonymous candidate profile hides PII', async () => {
     const cand = await register(app, `cand3-${Date.now()}@test.dev`);
     await request(app).put('/api/referral/candidate-profile').set('Authorization', `Bearer ${cand.token}`).send({ skills: ['Java'], visibility: 'anonymous', referralOptIn: true, submittedForReferral: true, currentEmployer: 'SecretCo' });
-    const emp = await register(app, `emp3-${Date.now()}@test.dev`, 'employee');
-    // make employee verified
-    await request(app).put('/api/employee/me').set('Authorization', `Bearer ${emp.token}`).send({ corporateEmail: emp.user.email, company: 'Acme' });
-    const otp = await request(app).post('/api/employee/verify-corporate-email').set('Authorization', `Bearer ${emp.token}`).send({});
-    await request(app).post('/api/employee/verify-corporate-email/confirm').set('Authorization', `Bearer ${emp.token}`).send({ code: otp.body.verificationCode });
+    const rec = await register(app, `rec-${Date.now()}@test.dev`, 'recruiter');
     const adminToken = (await request(app).post('/api/auth/demo-switch').send({ userId: 'usr_admin' })).body.token;
-    await request(app).post(`/api/employee/${emp.user.id}/verify-affiliation`).set('Authorization', `Bearer ${adminToken}`).send({});
+    await request(app).post(`/api/admin/recruiters/${rec.user.id}/authorize`).set('Authorization', `Bearer ${adminToken}`).send({});
 
-    const res = await request(app).get('/api/referral/candidates/search?skills=Java').set('Authorization', `Bearer ${emp.token}`);
+    const res = await request(app).get('/api/referral/candidates/search?skills=Java').set('Authorization', `Bearer ${rec.token}`);
     expect(res.status).toBe(200);
     const c = res.body[0];
     expect(c.name).toBeUndefined();

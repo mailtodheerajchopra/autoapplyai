@@ -13,16 +13,19 @@ async function verifyEmployee(app: any, token: string, userId: string, email: st
   await request(app).post('/api/employee/verify-corporate-email/confirm').set('Authorization', `Bearer ${token}`).send({ code: otp.body.verificationCode });
   const adminToken = (await request(app).post('/api/auth/demo-switch').send({ userId: 'usr_admin' })).body.token;
   await request(app).post(`/api/employee/${userId}/verify-affiliation`).set('Authorization', `Bearer ${adminToken}`).send({});
+  await request(app).post(`/api/admin/publishers/${userId}/approve`).set('Authorization', `Bearer ${adminToken}`).send({});
 }
 
 describe('Milestone 2 – referral marketplace', () => {
   const app = createApp();
 
-  it('only verified employees can publish referral jobs', async () => {
+  it('unapproved publisher cannot publish referral jobs', async () => {
     const emp = await register(app, `emp-${Date.now()}@test.dev`, 'employee');
-    // unverified cannot publish (no job yet). Create draft first requires verified? create requires verified too.
+    // publisher not approved -> create draft allowed, publish forbidden
     const create = await request(app).post('/api/referral/jobs').set('Authorization', `Bearer ${emp.token}`).send({ company: 'Acme', title: 'Engineer', skillsRequired: ['Java'] });
-    expect(create.status).toBe(403);
+    expect(create.status).toBe(201);
+    const publish = await request(app).post(`/api/referral/jobs/${create.body.id}/publish`).set('Authorization', `Bearer ${emp.token}`).send({});
+    expect(publish.status).toBe(403);
   });
 
   it('verified employee can create and publish a job', async () => {
@@ -107,12 +110,13 @@ describe('Milestone 2 – referral marketplace', () => {
   });
 
   it('anonymous candidate search hides identity', async () => {
-    const emp = await register(app, `emp7-${Date.now()}@test.dev`, 'employee');
-    await verifyEmployee(app, emp.token, emp.user.id, emp.user.email);
+    const rec = await register(app, `rec-${Date.now()}@test.dev`, 'recruiter');
+    const adminToken = (await request(app).post('/api/auth/demo-switch').send({ userId: 'usr_admin' })).body.token;
+    await request(app).post(`/api/admin/recruiters/${rec.user.id}/authorize`).set('Authorization', `Bearer ${adminToken}`).send({});
     const cand = await register(app, `cand5-${Date.now()}@test.dev`, 'candidate');
     await request(app).put('/api/referral/candidate-profile').set('Authorization', `Bearer ${cand.token}`).send({ skills: ['Java'], visibility: 'anonymous', referralOptIn: true, submittedForReferral: true, currentEmployer: 'SecretCo' });
 
-    const res = await request(app).get('/api/referral/candidates/search?skills=Java').set('Authorization', `Bearer ${emp.token}`);
+    const res = await request(app).get('/api/referral/candidates/search?skills=Java').set('Authorization', `Bearer ${rec.token}`);
     expect(res.status).toBe(200);
     expect(res.body.length).toBeGreaterThan(0);
     const c = res.body[0];
@@ -121,13 +125,14 @@ describe('Milestone 2 – referral marketplace', () => {
     expect(c.currentEmployer).toBeUndefined();
   });
 
-  it('candidate can shortlist candidate (employee)', async () => {
-    const emp = await register(app, `emp8-${Date.now()}@test.dev`, 'employee');
-    await verifyEmployee(app, emp.token, emp.user.id, emp.user.email);
+  it('authorized recruiter can shortlist candidate', async () => {
+    const rec = await register(app, `rec2-${Date.now()}@test.dev`, 'recruiter');
+    const adminToken = (await request(app).post('/api/auth/demo-switch').send({ userId: 'usr_admin' })).body.token;
+    await request(app).post(`/api/admin/recruiters/${rec.user.id}/authorize`).set('Authorization', `Bearer ${adminToken}`).send({});
     const cand = await register(app, `cand6-${Date.now()}@test.dev`, 'candidate');
-    const s = await request(app).post('/api/referral/shortlists').set('Authorization', `Bearer ${emp.token}`).send({ candidateUserId: cand.user.id, note: 'good' });
+    const s = await request(app).post('/api/referral/shortlists').set('Authorization', `Bearer ${rec.token}`).send({ candidateUserId: cand.user.id, note: 'good' });
     expect(s.status).toBe(201);
-    const list = await request(app).get('/api/referral/shortlists').set('Authorization', `Bearer ${emp.token}`);
+    const list = await request(app).get('/api/referral/shortlists').set('Authorization', `Bearer ${rec.token}`);
     expect(list.body.length).toBeGreaterThan(0);
   });
 });
