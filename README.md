@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mailtodheerajchopra/autoapplyai/actions/workflows/ci.yml/badge.svg)](https://github.com/mailtodheerajchopra/autoapplyai/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
-![Tests](https://img.shields.io/badge/tests-62%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-144%20passing-brightgreen)
 ![Deploy](https://img.shields.io/badge/deploy-Vercel-black)
 
 > **Live: [https://www.applymatica.com](https://www.applymatica.com)** — production on Vercel (Hobby, $0/mo).
@@ -18,7 +18,7 @@
 | Database | Supabase (PostgreSQL) via a custom single-snapshot `StateStore` (FileStore locally, SupabaseStore in prod) |
 | Auth | HMAC-signed bearer tokens, PBKDF2 password hashing, Google + LinkedIn OAuth |
 | AI | Google Gemini with a timeout-bounded degradation chain → Groq (Llama 3.3 70B) → rule-based mock tier |
-| Testing | Vitest + Supertest (62 tests), GitHub Actions CI |
+| Testing | Vitest + Supertest (144 tests), GitHub Actions CI |
 
 ---
 
@@ -76,6 +76,17 @@ AutoApply AI is a production-grade agent platform that:
 
 ---
 
+## New: Career & Referral Marketplace
+
+ApplyMatica now also includes an AI-powered career and employee-referral ecosystem:
+
+- Candidate and employee/referrer registration with corporate email verification and affiliation approval.
+- Referral job posting lifecycle (draft → published → active → filled/expired/closed) with moderation and reporting.
+- Referral request workflow with AI match scoring, explainable skill gaps, status history, and notifications.
+- Employment verification and separate background verification with explicit consent, withdrawal, and restricted document access.
+- Anonymous candidate discovery with privacy-first profiles and consent-based resume access.
+- Recruiter dashboard, admin analytics, and production hardening (rate limiting, validation, pagination, PWA).
+
 ## Architecture
 
 ```
@@ -97,7 +108,7 @@ AutoApply AI is a production-grade agent platform that:
 - **Async design:** `POST /agent/discover` returns `202 + jobId in <300ms`; the model call runs in the background and the client polls — with *stale-job rescue* so a serverless eviction can never strand a run.
 - **Model degradation chain:** primary 12s → secondary 30s → Groq 30s → mock fallback. 429/503 degrade silently; the product keeps working at zero quota.
 
-| Tests | Vitest + Supertest — **62 tests** (auth lockdown, filter chain, moderation, async pipeline, pool merge, storage round-trip) |
+| Tests | Vitest + Supertest — **144 tests** (auth lockdown, filter chain, moderation, async pipeline, pool merge, storage round-trip) |
 | Load | k6 — kickoff p95 ≈ 300 ms under concurrency, 0 errors |
 | Cost | $0 — Hobby plan, free Gemini tier amortized by the shared pool, free Supabase tier |
 
@@ -147,7 +158,7 @@ cd autoapplyai
 npm install
 cp .env.example .env        # fill in GEMINI_API_KEY, AUTH_SECRET, Supabase keys
 npm run dev                 # full-stack dev server at http://localhost:3000
-npm run test                # 62 tests
+npm run test                # 144 tests
 ```
 
 With no env config the app still boots in degraded mode (mock agent paths) — good for UI work.
