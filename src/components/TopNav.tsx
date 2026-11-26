@@ -26,6 +26,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -180,6 +181,14 @@ export const TopNav: React.FC<TopNavProps> = ({
               </button>
               ))
               : null}
+
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="md:hidden p-2 rounded-lg bg-slate-900 border border-slate-800 text-slate-200"
+              title="Menu"
+            >
+              <ChevronDown className={`w-4 h-4 transition-transform ${mobileMenuOpen ? 'rotate-180' : ''}`} />
+            </button>
 
             {user ? (
               <button
@@ -358,6 +367,19 @@ export const TopNav: React.FC<TopNavProps> = ({
         </div>
       </div>
     </header>
+      {mobileMenuOpen && (
+        <div className="md:hidden bg-slate-950 border-b border-slate-800 px-4 py-3 space-y-1">
+          {[...primaryNavItems, ...secondaryNavItems].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => { setActiveTab(item.id); setMobileMenuOpen(false); }}
+              className={`w-full text-left px-3 py-2 rounded-lg text-sm ${activeTab === item.id ? 'bg-indigo-950/60 text-indigo-300' : 'text-slate-300 hover:bg-slate-800'}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
       {user && (
         <ChangePasswordModal
           isOpen={showChangePassword}
