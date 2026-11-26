@@ -4,6 +4,71 @@
 
 ---
 
+## Product Vision
+
+ApplyMatica is evolving from an AI-powered job application assistant into a free career and community referral platform.
+
+**Positioning:** ApplyMatica – Your Career. Your Network. Your Next Opportunity.
+
+Core pillars:
+- Career: job discovery, resume management, application tracking and Workday autofill.
+- Referral: community-shared opportunities and employee referrals.
+- Trust: current-employer verification, transparent referral status and candidate privacy.
+
+## Most Important Business Rules
+
+### A. Opportunity posting permissions
+Every authenticated community member may post opportunities. Support three opportunity types:
+1. Regular job opportunity.
+2. Employee referral opportunity.
+3. Community-shared job opportunity.
+
+Do not restrict opportunity posting to verified employees. Distinguish clearly between:
+- An ordinary community member sharing a job.
+- A verified employee offering an employee referral.
+- A recruiter posting an opportunity.
+
+An unverified member must never be presented as a verified employee or official employee referrer.
+
+### B. Employment verification – current employer only for now
+For the initial release, implement only current-employer verification:
+- Corporate email OTP is the preferred method.
+- Authorized administrators may review supporting employment evidence when necessary.
+- Store verification status, company affiliation, verification method and timestamps.
+- Display a clear "Current Employer Verified" badge only after successful verification.
+- Do not expose uploaded employment documents publicly.
+- Require explicit user consent before verification.
+- Never contact an employee's current employer without explicit authorization.
+
+Do not implement previous-employer verification, education verification, identity verification, criminal checks, address verification or full background verification at this stage. Do not use the term "Background Verified".
+
+### C. Referral workflow
+Maintain a clear distinction between a referral request being accepted and an actual employee referral being submitted.
+
+Statuses:
+- Requested
+- Under Review
+- Shortlisted
+- Accepted
+- Referral Confirmed
+- Referral Submitted
+- Interview Scheduled
+- Selected
+- Rejected
+- Withdrawn
+
+Record status history with timestamps and the acting user. Only represent a referral as submitted after the employee confirms actual submission through the employer's referral process.
+
+### D. Completely free platform
+ApplyMatica must remain completely free. Do not introduce paid memberships, subscription plans, premium candidate access, paid referral requests, candidate access charges, payment gateways or monetization workflows.
+
+## Recommended Priorities
+
+- P0 – Core foundation: authentication/permissions, candidate and community profiles, current-employer verification, opportunity posting and discovery.
+- P1 – Referral marketplace: referral requests, candidate review/shortlisting, referral confirmation and submission, status history and notifications.
+- P2 – AI and privacy: AI matching and recommendations, anonymous candidate discovery, consent-based candidate visibility.
+- P3 – Enhancements: recruiter dashboard, analytics, additional verification methods.
+
 ## 0. Delivery Rules (apply to every milestone)
 
 1. **No big-bang changes.** Each milestone must be independently testable and mergeable.
@@ -123,7 +188,7 @@
 - **No consent/audit primitives** for sensitive docs.
 - **No notification system**.
 - **No candidate visibility/privacy controls**.
-- **No background verification provider abstraction** (must be mock/sandbox only).
+- **No full background-verification scope in initial release** (current-employer verification only).
 - **Snapshot size** will grow with marketplace data; monitor and consider per-entity migration in Milestone 5.
 - **Corporate email verification** not implemented.
 - **No rate limiting / abuse protection** on new public-ish endpoints.
@@ -249,28 +314,19 @@ type EmploymentVerificationStatus =
   'not_started' | 'pending_consent' | 'submitted' | 'under_review' |
   'verified' | 'rejected' | 'expired';
 
-// Background verification
-interface BackgroundVerificationRequest {
-  id; userId;
-  checks: { type: BgvCheckType; status: BgvStatus; result?: string; updatedAt }[];
-  status: 'not_started' | 'pending_consent' | 'submitted' | 'under_review' | 'completed' | 'rejected' | 'withdrawn';
-  consentGivenAt; consentWithdrawnAt?;
-  documents: string[];
-  provider: 'sandbox_mock'; // clearly identified mock for dev
-  createdAt; updatedAt;
-}
-type BgvCheckType = 'identity' | 'employment_history' | 'education' | 'address' | 'reference';
-type BgvStatus = 'not_started' | 'pending' | 'verified' | 'failed' | 'skipped';
+// Note: full background verification is out of scope for the initial release.
+// Only current-employer verification is supported. The codebase contains a
+// legacy/experimental BGV module that should not be presented as a product feature.
 
 interface VerificationDocument {
-  id; ownerUserId; kind: 'employment_proof' | 'identity' | 'education' | 'address' | 'reference' | 'other';
+  id; ownerUserId; kind: 'employment_proof' | 'other';
   storagePath; // opaque key; never a public URL
   mimeType; size; uploadedAt; expiresAt?;
   // access is mediated by signed, short-lived URLs + authorization
 }
 
 interface ConsentRecord {
-  id; userId; scope: string; // e.g. 'bgv', 'employment_verification', 'resume_access:<requestId>'
+  id; userId; scope: string; // e.g. 'employment_verification:<id>', 'resume_access:<candidateId>:<requesterId>'
   grantedAt; withdrawnAt?; ipAddress?; userAgent?; metadata?: Record<string, any>;
 }
 
@@ -308,7 +364,7 @@ When migrating hot collections to real tables, add indexes on:
 - `referral_requests(candidate_user_id)`, `(referral_job_id)`, `(employee_user_id)`
 - `referral_status_history(request_id, created_at)`
 - `employment_verifications(user_id, status)`
-- `bgv_requests(user_id, status)`
+- (removed: background-verification indexes; not in initial release scope)
 - `verification_documents(owner_user_id)`
 - `notifications(user_id, read, created_at)`
 - `consent_records(user_id, scope)`
@@ -348,7 +404,7 @@ Follow existing patterns: `authMiddleware`, user scoping, `persist()` + `void sa
 
 - `POST /referral/jobs` (create draft)
 - `PUT /referral/jobs/:id`
-- `POST /referral/jobs/:id/publish` (requires verified employee; status draft→published→active)
+- `POST /referral/jobs/:id/publish` (authenticated community member; verified employees/recruiters may carry a verified badge; status draft→published→active)
 - `POST /referral/jobs/:id/close`
 - `GET /referral/jobs` (discovery; filters)
 - `GET /referral/jobs/:id`
@@ -375,13 +431,9 @@ Follow existing patterns: `authMiddleware`, user scoping, `persist()` + `void sa
 - `PATCH /verification/employment/:id` (admin/verifier update status)
 - Corporate email OTP: `POST /verification/employment/:id/email-otp`, `/confirm`.
 
-### 4.6 Background verification
+### 4.6 Background verification (out of scope for initial release)
 
-- `POST /verification/bgv` (initiate, requires consent)
-- `GET /verification/bgv/mine`
-- `POST /verification/bgv/:id/consent`, `/consent/withdraw`
-- `POST /verification/bgv/:id/documents`
-- `PATCH /verification/bgv/:id` (admin/verifier/provider updates check results)
+- (Removed: background-verification endpoints; not in initial release scope)
 - Provider: `sandbox_mock` only; clearly labeled. No fake third-party calls.
 
 ### 4.7 Documents
@@ -441,7 +493,7 @@ Keep existing tabs intact.
 - Candidate management (existing tenants extended).
 - Employee verification queue.
 - Employment verification queue.
-- BGV queue.
+- (Background verification removed from initial release scope)
 - Referral job moderation.
 - Referral management.
 - User reports.
@@ -463,9 +515,9 @@ Reuse existing design tokens (slate/indigo/emerald, rounded-xl, border-slate-800
 
 ## 6. Security & Privacy Requirements (non-negotiable)
 
-1. **Corporate email verification** before employee can publish.
+1. **Opportunity posting is open to every authenticated community member**; corporate email verification is only required to display a verified employee/referrer badge or offer an employee referral.
 2. **No auto-verification** by company name selection.
-3. **Never contact current employer** without explicit documented consent; separate "current employer" from "previous employers" in verification flows; BGV current-employer check requires explicit consent flag.
+3. **Never contact current employer** without explicit documented consent; separate "current employer" from "previous employers" in verification flows.
 4. **Never disclose job-seeking** to current employer.
 5. **No exposure of payslips/IDs/employment docs** to referral providers; employees see only match summary + authorized fields.
 6. **Minimum necessary verification status** displayed (badge, not documents).
@@ -557,12 +609,12 @@ Extend admin stats:
 
 - `roles.test.ts` – role/capability guards, no self-promotion.
 - `referral-profiles.test.ts` – candidate/employee profile CRUD, visibility.
-- `referral-jobs.test.ts` – lifecycle, verified-only publish, moderation/report.
+- `referral-jobs.test.ts` - lifecycle, community posting, moderation/report.
 - `referral-requests.test.ts` – create, duplicate prevention, status transitions, history.
 - `privacy.test.ts` – anonymous discovery fields, resume access consent.
 - `matching.test.ts` – pure scoring/explainability (no AI dependency; mock extracted skills).
 - `employment-verification.test.ts` – consent, status flow, document access.
-- `bgv.test.ts` – consent, checks, withdrawal.
+- (Removed: bgv.test.ts; not in initial release scope)
 - `documents.test.ts` – signed URL authorization.
 - `notifications.test.ts`.
 - `rls-isolation.test.ts` – cross-user access denied (extend existing fresh-read tests).
@@ -604,15 +656,15 @@ Tasks:
 5. Notifications on request received/accepted/rejected.
 6. Tests: jobs, requests, privacy, duplicate.
 
-### Milestone 3 – Employment & background verification, consent & privacy
+### Milestone 3 - Current-employer verification, consent & privacy
 
 Tasks:
 1. `EmploymentVerification` flow + corporate email OTP + document review + HR/third-party (sandbox) provider abstraction.
-2. `BackgroundVerificationRequest` with configurable checks + consent + withdrawal.
+2. (Removed: full background verification; current-employer verification only.)
 3. `VerificationDocument` storage + signed URLs + authorization.
 4. `ConsentRecord` + audit.
 5. Admin verification queues.
-6. Tests: consent, BGV, document access, current-employer protection.
+6. Tests: consent, document access, current-employer protection. (BGV tests removed from initial scope.)
 
 ### Milestone 4 – AI candidate matching, anonymous discovery, notifications
 
@@ -700,7 +752,7 @@ Tasks:
 - **2026-11-26**: Plan created from repository assessment. Milestone 1 not started.
 - **2026-11-26**: Milestone 1 implemented: extended role/capability model, candidate & employee profiles, corporate email OTP verification, affiliation approval flow, frontend profile views, and tests. Lint + tests pass.
 - **2026-11-26**: Milestone 2 implemented: referral job lifecycle, referral request workflow with duplicate prevention/status history, notifications, anonymous candidate search, shortlists, and UI. Lint + tests pass.
-- **2026-11-26**: Milestone 3 implemented: employment & background verification, consent grant/withdraw, corporate email OTP, verifier-only status updates, restricted document access, consent records, and UI. Lint + tests pass.
+- **2026-11-26**: Milestone 3 implemented: current-employer verification, consent grant/withdraw, corporate email OTP, verifier-only status updates, restricted document access, consent records, and UI. Lint + tests pass.
 - **2026-11-26**: Milestone 4 implemented: deterministic AI/explainable matching module, match scoring on publish and request, matching candidate notifications, enhanced anonymous discovery with match summaries. Lint + tests pass.
 - **2026-11-26**: Milestone 5 implemented: recruiter dashboard views, admin referral analytics, cleanup endpoint, rate limiting, validation hardening, and tests. Lint + tests pass.
 - **2026-11-26**: Milestone 6 implemented: consent-based resume access, additional privacy/security tests, cross-user access verification. Lint + tests pass.

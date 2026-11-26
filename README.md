@@ -1,4 +1,4 @@
-# ApplyMatica (AutoApply AI) — Autonomous Job Discovery & Workday Auto-Fill Agent
+# ApplyMatica (AutoApply AI) - Your Career. Your Network. Your Next Opportunity.
 
 [![CI](https://github.com/mailtodheerajchopra/autoapplyai/actions/workflows/ci.yml/badge.svg)](https://github.com/mailtodheerajchopra/autoapplyai/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-Apache--2.0-green)
@@ -83,7 +83,7 @@ ApplyMatica now also includes an AI-powered career and employee-referral ecosyst
 - Candidate and employee/referrer registration with corporate email verification and affiliation approval.
 - Referral job posting lifecycle (draft → published → active → filled/expired/closed) with moderation and reporting.
 - Referral request workflow with AI match scoring, explainable skill gaps, status history, and notifications.
-- Employment verification and separate background verification with explicit consent, withdrawal, and restricted document access.
+- Current-employer verification with explicit consent, withdrawal, and restricted document access. (Full background verification is out of scope for the initial release.)
 - Anonymous candidate discovery with privacy-first profiles and consent-based resume access.
 - Recruiter dashboard, admin analytics, and production hardening (rate limiting, validation, pagination, PWA).
 
@@ -180,6 +180,12 @@ With no env config the app still boots in degraded mode (mock agent paths) — g
 - **Security** — [SECURITY.md](SECURITY.md): responsible disclosure (please don't open public issues for vulnerabilities).
 
 ---
+
+## Implementation Status
+
+- Implemented: authentication, candidate/employee profiles, current-employer verification, referral marketplace, referral requests, notifications, AI matching, anonymous discovery, recruiter/admin dashboards, Workday autofill, job discovery.
+- Planned: Referral Confirmed workflow stage, community posting for all authenticated members (currently verified-employee-gated), full anonymous resume-access consent UX, additional verification methods.
+- Free platform: no paid tiers or payment flows.
 
 ## License
 
